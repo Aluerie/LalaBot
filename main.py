@@ -32,7 +32,6 @@ class LalaBot(commands.Bot):
             guilds=True,
             members=True,
             presences=True,
-            message_content=True,
             messages=True,
         )
         super().__init__(
@@ -40,7 +39,7 @@ class LalaBot(commands.Bot):
             help_command=None,
             intents=intents,
             activity=discord.Streaming(
-                name="\N{BLACK HEART} %systemctl %ping",
+                name="\N{BLACK HEART} slash in #jailed_bots",
                 url="https://www.twitch.tv/irene_adler__",
             ),
         )
@@ -128,7 +127,7 @@ class LalaBot(commands.Bot):
         mention_regex = re.compile(rf"<@!?{LALA_BOT_ID}>")
 
         if mention_regex.fullmatch(message.content):
-            await message.channel.send(f"allo {MADGE_EMOTE}")
+            await message.channel.send(f"allo {MADGE_EMOTE} use slash commands;")
             return
 
         await self.process_commands(message)
@@ -145,25 +144,19 @@ class LalaBot(commands.Bot):
 bot = LalaBot()
 
 
-@bot.command(aliases=["help", "hello", "allo", "h", "a"])
-async def ping(ctx: commands.Context[LalaBot]) -> None:
-    await ctx.send(f"allo {MADGE_EMOTE}")
-
-
-@commands.is_owner()
-@bot.command()
+@bot.tree.command()
 async def systemctl(
-    ctx: commands.Context[LalaBot],
+    interaction: discord.Interaction[LalaBot],
     request: Literal["restart", "stop", "start"],
     service: Literal["alubot", "irenesbot", "lalabot"],
 ) -> None:
     try:
         result = await asyncio.create_subprocess_shell(f"sudo systemctl {request} {service}")
-        await ctx.send(f"I think we successfully did it. `result={result}`")
+        await interaction.response.send_message(f"I think we successfully did it. `result={result}`")
     except Exception:
         log.exception("Exception happened during !systemctl command", stack_info=True)
         # it might not go off
-        await ctx.send("Something went wrong.")
+        await interaction.response.send_message("Something went wrong.")
 
 
 bot.run(TOKEN)
