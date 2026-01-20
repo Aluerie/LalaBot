@@ -39,7 +39,7 @@ class LalaBot(commands.Bot):
             help_command=None,
             intents=intents,
             activity=discord.Streaming(
-                name="\N{BLACK HEART} slash in #jailed_bots",
+                name='\N{BLACK HEART} type "/" in #jailed_bots',
                 url="https://www.twitch.tv/irene_adler__",
             ),
         )
