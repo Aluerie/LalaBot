@@ -155,6 +155,7 @@ async def systemctl(
     request: Literal["restart", "stop", "start"],
     service: Literal["alubot", "irenesbot", "lalabot"],
 ) -> None:
+    """Perform a `sudo systemctl` shell command."""
     try:
         result = await asyncio.create_subprocess_shell(f"sudo systemctl {request} {service}")
         await interaction.response.send_message(f"I think we successfully did it. `result={result}`")
