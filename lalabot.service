@@ -1,0 +1,19 @@
+; sudo nano /etc/systemd/system/lalabot.service
+; sudo systemctl daemon-reload
+; sudo systemctl enable lalabot
+; sudo systemctl start lalabot
+; journalctl -u lalabot -e
+
+[Unit]
+Description=lalabot
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/LalaBot/
+ExecStart=/home/ubuntu/LalaBot/.venv/bin/python3.12 main.py
+User=ubuntu
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
