@@ -15,7 +15,6 @@ log.setLevel(logging.INFO)
 
 # Global const Variables
 COUNTER_LOOP_MAX = 10
-COMMAND_PREFIX = "%"
 DISCORD_COLOR = 0x5865F2
 TWITCH_COLOR = 0x9146FF
 MADGE_EMOTE = "<:DankMadgeThreat:1125591898241892482>"
@@ -35,7 +34,7 @@ class LalaBot(commands.Bot):
             messages=True,
         )
         super().__init__(
-            command_prefix=commands.when_mentioned_or(COMMAND_PREFIX),
+            command_prefix=commands.when_mentioned,
             help_command=None,
             intents=intents,
             activity=discord.Streaming(
