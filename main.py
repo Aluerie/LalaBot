@@ -127,7 +127,7 @@ class LalaBot(commands.Bot):
         mention_regex = re.compile(rf"<@!?{LALA_BOT_ID}>")
 
         if mention_regex.fullmatch(message.content):
-            await message.channel.send(f"allo {MADGE_EMOTE} use slash commands;")
+            await message.channel.send(f"{MADGE_EMOTE} Use slash commands!")
             return
 
         await self.process_commands(message)
@@ -136,12 +136,18 @@ class LalaBot(commands.Bot):
     async def on_command_error(self, ctx: commands.Context[Self], error: commands.CommandError) -> None:
         if isinstance(error, commands.CommandNotFound):
             # manual list, but whatever.
-            await ctx.send(f"allo {MADGE_EMOTE}. My commands are ^^^ping and ^^^system.")
+            await ctx.send(f"{MADGE_EMOTE} Use slash commands!")
         elif isinstance(error, (commands.BadLiteralArgument, commands.MissingRequiredArgument)):
             await ctx.send(str(error))
 
 
 bot = LalaBot()
+
+
+@bot.command()
+async def sync(ctx: commands.Context[LalaBot]) -> None:
+    await ctx.bot.tree.sync()
+    await ctx.send(f"synced the tree {MADGE_EMOTE}")
 
 
 @bot.tree.command()
