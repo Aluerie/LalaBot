@@ -27,10 +27,11 @@ reportUnknownArgumentType = "none"
 reportIncompatibleVariableOverride = "none"
 reportIncompatibleMethodOverride = "none"
 
-
 [tool.ruff]
 line-length = 125
 target-version = "py312"
+
+[tool.ruff.lint]
 select = ["ALL"]
 ignore = [
     "D",
