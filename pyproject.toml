@@ -9,7 +9,7 @@ dependencies = ["discord-py>=2.6.4"]
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
-exclude = ["**/__pycache__"]
+exclude = ["**/__pycache__", "**/node_modules", "**/.*", ".venv"]
 
 deprecateTypingAliases = true
 reportMissingTypeStubs = "none"
