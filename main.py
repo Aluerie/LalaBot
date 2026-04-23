@@ -164,9 +164,5 @@ async def systemctl(
         # it might not go off
         await interaction.response.send_message("Something went wrong.")
 
-def fou(x):
-    y= [2,                              8, 
-        999999999999999999,]
-    return 
 
 bot.run(TOKEN)
