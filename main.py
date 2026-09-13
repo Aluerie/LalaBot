@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Literal, Self, override
+from dataclasses import dataclass
+from typing import Any, Literal, Self, override
 
 import discord
 from discord.ext import commands, tasks
@@ -15,14 +16,29 @@ log.setLevel(logging.INFO)
 
 # Global const Variables
 COUNTER_LOOP_MAX = 10
+
+# Colors
 DISCORD_COLOR = 0x5865F2
 TWITCH_COLOR = 0x9146FF
+
+# Discord Message
 MADGE_EMOTE = "<:DankMadgeThreat:1125591898241892482>"
 MENTION_OWNER = "<@!312204139751014400>"
+
+# Discord Snowflakes
 SPAM_CHANNEL_ID = 970823670702411810
 TEST_GUILD_ID = 759916212842659850
 ALUBOT_ID = 713124699663499274
 LALA_BOT_ID = 812763204010246174
+
+
+@dataclass
+class Check:
+    name: str
+    func: Any
+    color: int
+    counter: int = 0
+    is_notified: bool = False
 
 
 class LalaBot(commands.Bot):
@@ -52,9 +68,14 @@ class LalaBot(commands.Bot):
         self.counter_2: int = 0
         self.is_notified_2: bool = False
 
+        self.checks: list[Check] = [
+            Check("alubot", self.check_alubot, DISCORD_COLOR),
+            Check("irebot", self.check_irebot, TWITCH_COLOR),
+        ]
+
     @override
     async def setup_hook(self) -> None:
-        self.watch_loop_1.start()
+        self.watch_loop.start()
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s", self.user)
@@ -67,55 +88,37 @@ class LalaBot(commands.Bot):
     def spam_channel(self) -> discord.TextChannel:
         return self.test_guild.get_channel(SPAM_CHANNEL_ID)  # pyright: ignore[reportReturnType]
 
-    @tasks.loop(seconds=69)
-    async def watch_loop_1(self) -> None:
+    async def check_alubot(self) -> bool:
+        member: discord.Member = self.test_guild.get_member(ALUBOT_ID)  # pyright: ignore[reportAssignmentType]
+        return member.status == discord.Status.online
+
+    async def check_irebot(self) -> bool:
+        process = await asyncio.create_subprocess_shell("sudo systemctl is-active --quiet irebot")
+        result = await process.wait()
+        return result == 0
+
+    @tasks.loop(seconds=200)
+    async def watch_loop(self) -> None:
         """This task checks whether @AluBot is online in discord.
 
         It does so via an egregious rich presence check.
         But hey, I'm not sure if I know any better ways for this.
         """
-        member: discord.Member = self.test_guild.get_member(ALUBOT_ID)  # pyright: ignore[reportAssignmentType]
 
-        if member.status == discord.Status.online:
-            self.counter_1 = 0
-            self.is_notified_1 = False
+        for check in self.checks:
+            if check.func():
+                check.counter = 0
+                check.is_notified = False
+            else:
+                check.counter += 1
+                if check.counter > COUNTER_LOOP_MAX:
+                    await self.spam_channel.send(
+                        content=f"{MENTION_OWNER}, {MADGE_EMOTE}",
+                        embed=discord.Embed(color=check.color, title=f"{check.name} is offline"),
+                    )
+                    check.is_notified = True
 
-        elif member.status == discord.Status.offline and not self.is_notified_1:
-            self.counter_1 += 1
-            if self.counter_1 > COUNTER_LOOP_MAX:
-                await self.spam_channel.send(
-                    content=f"{MENTION_OWNER}, {MADGE_EMOTE}",
-                    embed=discord.Embed(color=DISCORD_COLOR, title=f"{member.display_name} is now offline"),
-                )
-                self.is_notified_1 = True
-
-    @tasks.loop(seconds=70)
-    async def watch_loop_2(self) -> None:
-        """This task checks whether @IreBot is online on twitch.
-
-        It does so via checking if the service is active.
-
-        Source
-        ------
-        https://stackoverflow.com/a/57208026/19217368
-        """
-        process = await asyncio.create_subprocess_shell("systemctl is-active --quiet service-name")
-        result = await process.wait()
-
-        if result == 0:
-            self.counter_2 = 0
-            self.is_notified_2 = False
-        elif not self.is_notified_2:
-            self.counter_2 += 1
-            if self.counter_2 > COUNTER_LOOP_MAX:
-                await self.spam_channel.send(
-                    content=f"{MENTION_OWNER}, {MADGE_EMOTE}",
-                    embed=discord.Embed(color=TWITCH_COLOR, title="IreBot is now offline"),
-                )
-                self.is_notified_2 = True
-
-    @watch_loop_2.before_loop
-    @watch_loop_1.before_loop
+    @watch_loop.before_loop
     async def before(self) -> None:
         await self.wait_until_ready()
 
