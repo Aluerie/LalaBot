@@ -54,10 +54,12 @@ class Watcher(commands.Cog):
         return member.status == discord.Status.online
 
     async def check_irebot(self) -> bool:
+        # service
         process = await asyncio.create_subprocess_shell("sudo systemctl is-active --quiet irebot")
         result = await process.wait()
-
-        return result == 0 or get_now() - self.checks["irebot"].data["dt"] < datetime.timedelta(minutes=15)
+        is_service_good = result == 0
+        is_webhook_good = get_now() - self.checks["irebot"].data["dt"] < datetime.timedelta(minutes=15)
+        return is_webhook_good and is_service_good
 
     @tasks.loop(seconds=599)
     async def watch_loop(self) -> None:
