@@ -70,13 +70,16 @@ class Watcher(commands.Cog):
         is_webhook_good = get_now() - self.checks["irebot"].data["dt"] < datetime.timedelta(minutes=15)
         return is_webhook_good and is_service_good
 
-    @tasks.loop(seconds=599)
+    @tasks.loop(seconds=899)
     async def watch_loop(self) -> None:
         """This task checks whether @AluBot is online in discord.
 
         It does so via an egregious rich presence check.
         But hey, I'm not sure if I know any better ways for this.
         """
+        if self.watch_loop.current_loop == 0:
+            await self.lalawatch_channel.send("🔍 Starting the watch loop")
+            return
 
         for check_name, check in self.checks.items():
             if await check.func():
