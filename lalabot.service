@@ -11,7 +11,8 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/ubuntu/LalaBot/
-ExecStart=/home/ubuntu/LalaBot/.venv/bin/python3.12 main.py
+ExecStart=/home/ubuntu/.local/bin/uv run main.py
+; ExecStart=/home/ubuntu/LalaBot/.venv/bin/python3.12 main.py
 User=ubuntu
 Restart=always
 

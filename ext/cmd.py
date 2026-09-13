@@ -54,5 +54,5 @@ class Cmd(commands.Cog):
 
 
 async def setup(bot: LalaBot) -> None:
-    """Load AluBot extension. Framework of discord.py."""
+    """Load LalaBot extension. Framework of discord.py."""
     await bot.add_cog(Cmd(bot))
