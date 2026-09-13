@@ -18,11 +18,16 @@ if TYPE_CHECKING:
 
 @dataclass
 class Check:
+    name: str
     func: Any
     color: int
     counter: int = 0
     is_notified: bool = False
     data: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def is_okay(self) -> bool:
+        return self.counter == 0
 
 
 def get_now() -> datetime.datetime:
@@ -33,8 +38,8 @@ class Watcher(commands.Cog):
     def __init__(self, bot: LalaBot) -> None:
         self.bot: LalaBot = bot
         self.checks: dict[str, Check] = {
-            "alubot": Check(self.check_alubot, const.DISCORD_COLOR),
-            "irebot": Check(self.check_irebot, const.TWITCH_COLOR, data={"dt": get_now()}),
+            "alubot": Check("alubot", self.check_alubot, const.DISCORD_COLOR),
+            "irebot": Check("irebot", self.check_irebot, const.TWITCH_COLOR, data={"dt": get_now()}),
         }
 
     @override
@@ -48,6 +53,10 @@ class Watcher(commands.Cog):
     @discord.utils.cached_property
     def spam_channel(self) -> discord.TextChannel:
         return self.test_guild.get_channel(const.SPAM_CHANNEL_ID)  # pyright: ignore[reportReturnType]
+
+    @discord.utils.cached_property
+    def lalawatch_channel(self) -> discord.TextChannel:
+        return self.test_guild.get_channel(const.LALAWATCH_CHANNEL_ID)  # pyright: ignore[reportReturnType]
 
     async def check_alubot(self) -> bool:
         member: discord.Member = self.test_guild.get_member(const.ALUBOT_ID)  # pyright: ignore[reportAssignmentType]
@@ -81,6 +90,13 @@ class Watcher(commands.Cog):
                         embed=discord.Embed(color=check.color, title=f"{check_name} is offline"),
                     )
                     check.is_notified = True
+                else:
+                    await self.lalawatch_channel.send("✅")
+
+        if not_okay_checks := [c for c in self.checks.values() if not c.is_okay]:
+            await self.lalawatch_channel.send(f"❌ {','.join(c.name for c in not_okay_checks)}")
+        else:
+            await self.lalawatch_channel.send("✅")
 
     @watch_loop.before_loop
     async def before(self) -> None:
