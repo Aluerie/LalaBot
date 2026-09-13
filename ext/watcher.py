@@ -87,12 +87,13 @@ class Watcher(commands.Cog):
                 check.is_notified = False
             else:
                 check.counter += 1
-                if check.counter > const.COUNTER_LOOP_MAX:
+                if not check.is_notified and check.counter > const.COUNTER_LOOP_MAX:
                     await self.spam_channel.send(
                         content=f"{const.MENTION_OWNER}, {const.MADGE_EMOTE}",
                         embed=discord.Embed(color=check.color, title=f"{check.name} is offline"),
                     )
                     check.is_notified = True
+
                 await self.lalawatch_channel.send(f"❌ {check.name} {check.counter}")
 
         if all(c.is_okay for c in self.checks.values()):
