@@ -2,43 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
-from dataclasses import dataclass
-from typing import Any, Literal, Self, override
+from typing import override
 
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 from config import TOKEN
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
-# Global const Variables
-COUNTER_LOOP_MAX = 10
-
-# Colors
-DISCORD_COLOR = 0x5865F2
-TWITCH_COLOR = 0x9146FF
-
-# Discord Message
-MADGE_EMOTE = "<:DankMadgeThreat:1125591898241892482>"
-MENTION_OWNER = "<@!312204139751014400>"
-
-# Discord Snowflakes
-SPAM_CHANNEL_ID = 970823670702411810
-TEST_GUILD_ID = 759916212842659850
-ALUBOT_ID = 713124699663499274
-LALA_BOT_ID = 812763204010246174
-
-
-@dataclass
-class Check:
-    name: str
-    func: Any
-    color: int
-    counter: int = 0
-    is_notified: bool = False
+initial_extensions = (
+    "ext.watcher",
+    "ext.cmd",
+)
 
 
 class LalaBot(commands.Bot):
@@ -58,114 +35,24 @@ class LalaBot(commands.Bot):
                 url="https://www.twitch.tv/irene_adler__",
             ),
         )
-        # very lazy;
-
-        # for discord status loop
-        self.counter_1: int = 0
-        self.is_notified_1: bool = False
-
-        # for systemctl loop
-        self.counter_2: int = 0
-        self.is_notified_2: bool = False
-
-        self.checks: list[Check] = [
-            Check("alubot", self.check_alubot, DISCORD_COLOR),
-            Check("irebot", self.check_irebot, TWITCH_COLOR),
-        ]
-
-    @override
-    async def setup_hook(self) -> None:
-        self.watch_loop.start()
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s", self.user)
 
-    @discord.utils.cached_property
-    def test_guild(self) -> discord.Guild:
-        return self.get_guild(TEST_GUILD_ID)  # pyright: ignore[reportReturnType]
-
-    @discord.utils.cached_property
-    def spam_channel(self) -> discord.TextChannel:
-        return self.test_guild.get_channel(SPAM_CHANNEL_ID)  # pyright: ignore[reportReturnType]
-
-    async def check_alubot(self) -> bool:
-        member: discord.Member = self.test_guild.get_member(ALUBOT_ID)  # pyright: ignore[reportAssignmentType]
-        return member.status == discord.Status.online
-
-    async def check_irebot(self) -> bool:
-        process = await asyncio.create_subprocess_shell("sudo systemctl is-active --quiet irebot")
-        result = await process.wait()
-        return result == 0
-
-    @tasks.loop(seconds=200)
-    async def watch_loop(self) -> None:
-        """This task checks whether @AluBot is online in discord.
-
-        It does so via an egregious rich presence check.
-        But hey, I'm not sure if I know any better ways for this.
-        """
-
-        for check in self.checks:
-            if check.func():
-                check.counter = 0
-                check.is_notified = False
-            else:
-                check.counter += 1
-                if check.counter > COUNTER_LOOP_MAX:
-                    await self.spam_channel.send(
-                        content=f"{MENTION_OWNER}, {MADGE_EMOTE}",
-                        embed=discord.Embed(color=check.color, title=f"{check.name} is offline"),
-                    )
-                    check.is_notified = True
-
-    @watch_loop.before_loop
-    async def before(self) -> None:
-        await self.wait_until_ready()
-
     @override
-    async def on_message(self, message: discord.Message, /) -> None:
-        # it doesn't react when doing simple "@LalaBot" otherwise even with commands.when_mentioned
-        # it needs a command to follow like "@LalaBot hey"
-        mention_regex = re.compile(rf"<@!?{LALA_BOT_ID}>")
-
-        if mention_regex.fullmatch(message.content):
-            await message.channel.send(f"{MADGE_EMOTE} Use slash commands!")
-            return
-
-        await self.process_commands(message)
-
-    @override
-    async def on_command_error(self, ctx: commands.Context[Self], error: commands.CommandError) -> None:
-        if isinstance(error, commands.CommandNotFound):
-            # manual list, but whatever.
-            await ctx.send(f"{MADGE_EMOTE} Use slash commands!")
-        elif isinstance(error, (commands.BadLiteralArgument, commands.MissingRequiredArgument)):
-            await ctx.send(str(error))
+    async def setup_hook(self) -> None:
+        for extension in initial_extensions:
+            try:
+                await self.load_extension(extension)
+            except Exception:
+                log.exception("Failed to load extension %s.", extension)
 
 
-bot = LalaBot()
+async def run_bot() -> None:
+    discord.utils.setup_logging()
+    async with LalaBot() as bot:
+        await bot.start(TOKEN)
 
 
-@bot.command()
-async def sync(ctx: commands.Context[LalaBot]) -> None:
-    await ctx.bot.tree.sync()
-    await ctx.send(f"synced the tree {MADGE_EMOTE}")
-
-
-@bot.tree.command()
-async def systemctl(
-    interaction: discord.Interaction[LalaBot],
-    request: Literal["restart", "stop", "start"],
-    service: Literal["alubot", "irenesbot", "lalabot"],
-) -> None:
-    """Perform a `sudo systemctl` shell command."""
-    try:
-        result = await asyncio.create_subprocess_shell(f"sudo systemctl {request} {service}")
-        await interaction.response.send_message(f"I think we successfully did it. `result={result}`")
-    except Exception:
-        log.exception("Exception happened during !systemctl command", stack_info=True)
-        # it might not go off
-        await interaction.response.send_message("Something went wrong.")
-
-
-bot.run(TOKEN)
+if __name__ == "__main__":
+    asyncio.run(run_bot())
