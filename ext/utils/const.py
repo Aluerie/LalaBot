@@ -1,5 +1,5 @@
 # Global const Variables
-COUNTER_LOOP_MAX = 10
+COUNTER_LOOP_MAX = 9
 
 # Colors
 DISCORD_COLOR = 0x5865F2

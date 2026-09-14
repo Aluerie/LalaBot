@@ -60,7 +60,10 @@ class Watcher(commands.Cog):
 
     async def check_alubot(self) -> bool:
         member: discord.Member = self.test_guild.get_member(const.ALUBOT_ID)  # pyright: ignore[reportAssignmentType]
-        return member.status == discord.Status.online
+        is_status_online = member.status == discord.Status.online
+        if not is_status_online:
+            await self.lalawatch_channel.send(f"❌ AluBot - {is_status_online=}")
+        return is_status_online
 
     async def check_irebot(self) -> bool:
         # service
@@ -68,7 +71,10 @@ class Watcher(commands.Cog):
         result = await process.wait()
         is_service_good = result == 0
         is_webhook_good = get_now() - self.checks["irebot"].data["dt"] < datetime.timedelta(minutes=15)
-        return is_webhook_good and is_service_good
+        is_all_good = is_webhook_good and is_service_good
+        if not is_all_good:
+            await self.lalawatch_channel.send(f"❌ IreBot - {is_service_good=} {is_webhook_good}")
+        return is_all_good
 
     @tasks.loop(seconds=899)
     async def watch_loop(self) -> None:
@@ -94,10 +100,7 @@ class Watcher(commands.Cog):
                     )
                     check.is_notified = True
 
-                await self.lalawatch_channel.send(f"❌ {check.name} {check.counter}")
-
-        if all(c.is_okay for c in self.checks.values()):
-            await self.lalawatch_channel.send("✅")
+        await self.lalawatch_channel.send("✅" if all(c.is_okay for c in self.checks.values()) else "❌")
 
     @watch_loop.before_loop
     async def before(self) -> None:
