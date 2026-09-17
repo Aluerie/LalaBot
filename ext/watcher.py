@@ -50,9 +50,6 @@ class Watcher(commands.Cog):
     def test_guild(self) -> discord.Guild:
         return self.bot.get_guild(const.TEST_GUILD_ID)  # pyright: ignore[reportReturnType]
 
-    @discord.utils.cached_property
-    def spam_channel(self) -> discord.TextChannel:
-        return self.test_guild.get_channel(const.SPAM_CHANNEL_ID)  # pyright: ignore[reportReturnType]
 
     @discord.utils.cached_property
     def lalawatch_channel(self) -> discord.TextChannel:
@@ -73,7 +70,7 @@ class Watcher(commands.Cog):
         is_webhook_good = get_now() - self.checks["irebot"].data["dt"] < datetime.timedelta(minutes=15)
         is_all_good = is_webhook_good and is_service_good
         if not is_all_good:
-            await self.lalawatch_channel.send(f"❌ IreBot - {is_service_good=} {is_webhook_good}")
+            await self.lalawatch_channel.send(f"❌ IreBot ```py\n{is_service_good=}\n{is_webhook_good=}\n```")
         return is_all_good
 
     @tasks.loop(seconds=899)
@@ -94,7 +91,7 @@ class Watcher(commands.Cog):
             else:
                 check.counter += 1
                 if not check.is_notified and check.counter > const.COUNTER_LOOP_MAX:
-                    await self.spam_channel.send(
+                    await self.lalawatch_channel.send(
                         content=f"{const.MENTION_OWNER}, {const.MADGE_EMOTE}",
                         embed=discord.Embed(color=check.color, title=f"{check.name} is offline"),
                     )
