@@ -6,6 +6,7 @@
 
 [Unit]
 Description=lalabot
+Wants=network-online.target
 After=network-online.target
 
 [Service]

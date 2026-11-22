@@ -1,31 +1,10 @@
 [project]
 name = "lalabot"
 version = "0.1.0"
-description = "Add your description here"
+description = "Discord bot that watches over AluBot and IreBot and pings the owner when they go down"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["discord-py>=2.6.4"]
-
-[tool.pyright]
-pythonVersion = "3.12"
-typeCheckingMode = "strict"
-exclude = ["**/__pycache__", "**/node_modules", "**/.*", ".venv"]
-
-deprecateTypingAliases = true
-reportMissingTypeStubs = "none"
-reportPrivateUsage = "none"
-reportImplicitOverride = "warning"
-reportUnnecessaryIsInstance = "none"
-reportUnnecessaryTypeIgnoreComment = "warning"
-reportUnusedImport = "warning"
-reportUnusedVariable = "none"
-reportUnusedClass = "none"
-reportUnusedFunction = "none"
-reportUnknownMemberType = "none"
-reportUnknownVariableType = "none"
-reportUnknownArgumentType = "none"
-reportIncompatibleVariableOverride = "none"
-reportIncompatibleMethodOverride = "none"
 
 [tool.ruff]
 line-length = 125
@@ -47,8 +26,6 @@ ignore = [
     "UP034",
     "ANN401",
     "UP032",
-    "D203",
-    "D213",
     "COM812",
 ]
 
