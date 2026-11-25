@@ -15,18 +15,15 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# LalaBot is obviously up while it can update its own status, so only the other bots are watched.
-WATCHED_SERVICES = [name for name in const.SERVICES if name != "lalabot"]
-
 
 async def bots_presence() -> tuple[discord.Status, str]:
-    """Get the Discord status (its colour) and custom status text that sum up whether the watched bots are up.
+    """Get the Discord status (its colour) and custom status text that sum up whether the bots are up.
 
     * 🟢 online: every bot is up;
     * 🟡 idle: some bot is (re)starting or stopping, and none is down;
     * 🔴 do not disturb: some bot is down (failed or stopped).
     """
-    services = await show_services(WATCHED_SERVICES, ["ActiveState"])
+    services = await show_services(const.SERVICES, ["ActiveState"])
     states = {name: props.get("ActiveState", "?") for name, props in services.items()}
     up = sum(state == "active" for state in states.values())
     down = [name for name, state in states.items() if state in {"failed", "inactive"}]
@@ -40,7 +37,7 @@ async def bots_presence() -> tuple[discord.Status, str]:
 
 
 class Presence(commands.Cog):
-    """Keeps LalaBot's Discord status in sync with whether the other bots are up.
+    """Keeps LalaBot's Discord status in sync with whether the bots, LalaBot included, are up.
 
     So a glance at the member list (green, yellow or red LalaBot) tells whether everything is fine.
     Only runs as a systemd service: at home there are no services to check.

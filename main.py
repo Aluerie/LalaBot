@@ -31,7 +31,7 @@ class LalaBot(commands.Bot):
             command_prefix=commands.when_mentioned,
             help_command=None,
             intents=intents,
-            # In prod, `ext.presence` replaces it with whether the other bots are up once the first check is done.
+            # In prod, `ext.presence` replaces it with whether the bots are up once the first check is done.
             activity=discord.CustomActivity("👀 Checking the bots…" if is_systemd_service() else "🏠 Running at home"),
         )
         self.watchdog_task: asyncio.Task[None] | None = None

@@ -217,7 +217,8 @@ class Services(commands.Cog):
 
         header = f"📓 Last {len(shown)} journal lines of {label(service)} (UTC):"
         body = "\n".join(shown).replace("```", "`\N{ZERO WIDTH SPACE}``") or "(empty)"
-        await interaction.followup.send(f"{header}\n```\n{body}\n```")
+        # `py` highlighting mostly helps with tracebacks, which are what one usually looks for in there.
+        await interaction.followup.send(f"{header}\n```py\n{body}\n```")
 
     @app_commands.command()
     @app_commands.default_permissions(manage_guild=True)
