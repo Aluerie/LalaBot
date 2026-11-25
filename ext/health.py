@@ -57,7 +57,7 @@ class Health(commands.Cog):
         try:
             async with self.session.get(HEALTHCHECK_URL) as response:
                 response.raise_for_status()
-        except (TimeoutError, aiohttp.ClientError):
+        except TimeoutError, aiohttp.ClientError:
             log.warning("Failed to ping healthchecks.io", exc_info=True)
 
     @ping_loop.before_loop

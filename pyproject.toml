@@ -3,15 +3,15 @@ name = "lalabot"
 version = "0.1.0"
 description = "🤖 Discord bot to control my bots' systemd services from Discord"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.15"
 dependencies = [
-    "aiohttp>=3.13.3",
+    "aiohttp>=3.14.4",
     "discord-py>=2.6.4",
 ]
 
 [tool.ruff]
 line-length = 125
-target-version = "py312"
+target-version = "py315"
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -40,8 +40,8 @@ line-ending = "lf"
 
 [dependency-groups]
 dev = [
-    "ruff>=0.17.6",
-    "ty>=0.0.110",
+    "ruff>=0.17.4",
+    "ty>=0.0.101",
 ]
 
 
