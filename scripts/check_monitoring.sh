@@ -33,9 +33,14 @@ check '[ "$fragment" = /home/ubuntu/LalaBot/vps-resources.timer ]' "timer is lin
 check '[ "$(systemctl is-active vps-resources.timer)" = active ]' "timer is running"
 check '[ "$(systemctl show -p Result --value vps-resources.service)" = success ]' "last check succeeded"
 
+printf '\n\033[35mdatabase backups\033[0m (by LalaBot)\n'
+backup_url_pattern="^BACKUP_HEALTHCHECK_URL.*=.*[\"']"
+check 'grep -q "$backup_url_pattern" /home/ubuntu/LalaBot/config.py 2>/dev/null' \
+    "BACKUP_HEALTHCHECK_URL is set in /home/ubuntu/LalaBot/config.py"
+
 printf '\n\033[35mshared\033[0m\n'
 check '[ -s /home/ubuntu/.config/failure-webhook-url ]' "crash alert webhook URL file exists"
 check 'command -v curl >/dev/null' "curl is installed"
 echo
-echo "Not checkable from here: in healthchecks.io, every bot's check needs period 5 min / grace 9 min"
-echo "and the Discord integration that posts into #💖healthcheck."
+echo "Not checkable from here: in healthchecks.io, every bot's check needs period 5 min / grace 9 min,"
+echo "the backup check period 1 day / grace 2 hours, and all of them the Discord integration for #💖healthcheck."

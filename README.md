@@ -43,4 +43,7 @@ LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bo
 * **Disk space and memory** — `vps-resources.timer` runs [scripts/check_resources.sh](scripts/check_resources.sh)
   every 5 minutes, which posts to the same webhook when `/` is 90%+ full or less than 10% of RAM is available,
   reminds every 6 hours while it lasts, and posts again once it's fine.
+* **Database backups** — after every successful backup LalaBot pings a daily healthchecks.io check
+  (`BACKUP_HEALTHCHECK_URL` in `config.py`), and pings its `/fail` URL when the daily backup fails.
+  So healthchecks.io alerts both on a failed backup and on a day without one.
 * **Check it all** — `make monitoring` shows whether every bot and the timer above are set up on the VPS.

@@ -6,9 +6,12 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, override
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+
+import config
 
 from .utils import const, shell
 from .utils.systemd import is_systemd_service
@@ -18,6 +21,27 @@ if TYPE_CHECKING:
 
 
 log = logging.getLogger(__name__)
+
+BACKUP_HEALTHCHECK_URL: str | None = getattr(config, "BACKUP_HEALTHCHECK_URL", None)
+
+
+async def ping_backup_healthcheck(*, failed: bool = False) -> None:
+    """Ping the healthchecks.io check of the backups: after every successful backup, or with ``/fail`` after a failed one.
+
+    healthchecks.io then alerts when the daily backup fails or doesn't happen at all.
+    Only pings when running as a systemd service, so a backup made at home doesn't count.
+    """
+    if BACKUP_HEALTHCHECK_URL is None or not is_systemd_service():
+        return
+    url = f"{BACKUP_HEALTHCHECK_URL}/fail" if failed else BACKUP_HEALTHCHECK_URL
+    try:
+        async with (
+            aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session,
+            session.get(url) as response,
+        ):
+            response.raise_for_status()
+    except TimeoutError, aiohttp.ClientError:
+        log.warning("Failed to ping the backup healthcheck", exc_info=True)
 
 
 class Backup(commands.Cog):
@@ -34,6 +58,8 @@ class Backup(commands.Cog):
         if not is_systemd_service():
             log.info("Not running as a systemd service, so not backing up the database daily.")
             return
+        if BACKUP_HEALTHCHECK_URL is None:
+            log.warning("BACKUP_HEALTHCHECK_URL is not set in config.py, so nothing notices missing backups.")
         self.daily_backup.start()
 
     @override
@@ -50,7 +76,7 @@ class Backup(commands.Cog):
         return thread
 
     async def send_backup(self) -> None:
-        """Dump the database with ``pg_dump`` and send the dump to the backups post."""
+        """Dump the database with ``pg_dump``, send the dump to the backups post and ping the backup healthcheck."""
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / f"{const.DATABASE_NAME}.sql"
             returncode, output = await shell.run("pg_dump", "-f", str(path), const.DATABASE_NAME, timeout=300)
@@ -59,6 +85,7 @@ class Backup(commands.Cog):
                 raise RuntimeError(msg)
             thread = await self.get_backup_thread()
             await thread.send(file=discord.File(path))
+        await ping_backup_healthcheck()
 
     @tasks.loop(time=dt.time(hour=18, minute=5, tzinfo=dt.UTC))
     async def daily_backup(self) -> None:
@@ -67,6 +94,7 @@ class Backup(commands.Cog):
             await self.send_backup()
         except Exception:
             log.exception("Daily database backup failed")
+            await ping_backup_healthcheck(failed=True)
             try:
                 thread = await self.get_backup_thread()
                 await thread.send(f"<@{const.OWNER_ID}> ❌ Daily database backup failed, see `/journal lalabot`.")
