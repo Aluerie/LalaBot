@@ -1,7 +1,19 @@
 # 🤖 LalaBot
 
-A small Discord bot to control my bots' systemd services from Discord (`/systemctl`),
-e.g. to restart [my main bot](https://github.com/Aluerie/AluBot) when it is broken.
+A small Discord bot that looks after my other bots on the VPS
+([AluBot](https://github.com/Aluerie/AluBot), IreBot, Dota2Bot),
+so I can manage them from Discord, e.g. restart one from my phone when it is broken.
+
+## 🎮 Commands
+
+All of them are owner-only.
+
+* `/systemctl <restart|stop|start> <service>` — run `sudo systemctl` on a bot's service.
+* `/status` — whether each service is running, since when, and how many times systemd auto-restarted it.
+* `/journal <service> [lines]` — the latest lines of a service's systemd journal, as a file.
+* `/logs <service>` — the log file a bot writes itself (`.temp/*.log` in its folder), as a file.
+* `/backup` — back up the VPS PostgreSQL database to the backup channel right now.
+  It also happens on its own every day at 18:05 UTC.
 
 ## ⚙️ Config
 

@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
-import discord
-from discord import app_commands
 from discord.ext import commands
 
 from .utils import const
@@ -26,55 +23,6 @@ class Cmd(commands.Cog):
     async def sync(self, ctx: commands.Context[LalaBot]) -> None:
         await ctx.bot.tree.sync()
         await ctx.send(f"synced the tree {const.MADGE_EMOTE}")
-
-    @app_commands.command()
-    @app_commands.default_permissions(administrator=True)
-    async def systemctl(
-        self,
-        interaction: discord.Interaction[LalaBot],
-        request: Literal["restart", "stop", "start"],
-        service: Literal["alubot", "irebot", "lalabot"],
-    ) -> None:
-        """Perform a `sudo systemctl` shell command."""
-        if interaction.user.id != const.OWNER_ID:
-            await interaction.response.send_message(f"{const.MADGE_EMOTE} Not for you.", ephemeral=True)
-            return
-
-        if service == "lalabot" and request == "stop":
-            await interaction.response.send_message(
-                f"{const.MADGE_EMOTE} Stopping LalaBot can't be undone from Discord. Use SSH if you really mean it.",
-                ephemeral=True,
-            )
-            return
-
-        if service == "lalabot" and request == "restart":
-            # The command below kills this very process, so there would be nobody left to send the result.
-            await interaction.response.send_message(f"Running `sudo systemctl {request} {service}`, bye.")
-            await asyncio.create_subprocess_exec("sudo", "systemctl", request, service)
-            return
-
-        await interaction.response.defer()
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "sudo",
-                "systemctl",
-                request,
-                service,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            stdout, _ = await process.communicate()
-        except Exception:
-            log.exception("Exception happened during /systemctl command")
-            await interaction.followup.send("Something went wrong, see logs.")
-            return
-
-        output = stdout.decode(errors="replace").strip()[-1800:]  # the tail, where systemctl puts the error
-        status = "✅" if process.returncode == 0 else "❌"
-        message = f"{status} `sudo systemctl {request} {service}` exited with code {process.returncode}."
-        if output:
-            message += f"\n```\n{output}\n```"
-        await interaction.followup.send(message)
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx: commands.Context[LalaBot], error: commands.CommandError) -> None:

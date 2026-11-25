@@ -13,8 +13,10 @@ from ext.utils.systemd import sd_notify, watchdog_loop
 log = logging.getLogger(__name__)
 
 initial_extensions = (
+    "ext.backup",
     "ext.cmd",
     "ext.health",
+    "ext.services",
 )
 
 
