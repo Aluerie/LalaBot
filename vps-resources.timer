@@ -1,0 +1,11 @@
+; Starts vps-resources.service every 5 minutes. Setup instructions are in vps-resources.service.
+
+[Unit]
+Description=Check the VPS's disk space and memory every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

@@ -23,7 +23,7 @@ Copy [config.example.py](config.example.py) to `config.py` (git-ignored) and fil
 
 LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bot:
 
-* **healthchecks.io** — every bot (AluBot, IreBot, LalaBot) pings its own check every few minutes while it's healthy.
+* **healthchecks.io** — every bot (AluBot, IreBot, Dota2Bot, LalaBot) pings its own check every few minutes while it's healthy.
   When pings stop (bot down, stuck, disconnected, or the whole VPS down), healthchecks.io notifies me.
   LalaBot's check URL goes into `config.py` as `HEALTHCHECK_URL`.
 * **systemd `ExecStopPost=`** — [scripts/notify_failure.sh](scripts/notify_failure.sh) posts to a Discord webhook
@@ -31,3 +31,7 @@ LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bo
   The webhook URL lives on the VPS in `/home/ubuntu/.config/failure-webhook-url`.
   A crash loop only posts once per 30 minutes per service, counting the failures in between.
 * **systemd watchdog** — with `Type=notify` + `WatchdogSec=`, a bot whose event loop gets stuck is restarted automatically.
+* **Disk space and memory** — `vps-resources.timer` runs [scripts/check_resources.sh](scripts/check_resources.sh)
+  every 5 minutes, which posts to the same webhook when `/` is 90%+ full or less than 10% of RAM is available,
+  reminds every 6 hours while it lasts, and posts again once it's fine.
+* **Check it all** — `make monitoring` shows whether every bot and the timer above are set up on the VPS.

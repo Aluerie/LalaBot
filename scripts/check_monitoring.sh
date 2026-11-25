@@ -27,6 +27,12 @@ for entry in \
     check 'grep -q "$pattern" "$config" 2>/dev/null' "HEALTHCHECK_URL is set in $config"
 done
 
+printf '\n\033[35mvps-resources\033[0m (disk space and memory alerts)\n'
+fragment=$(readlink -f "$(systemctl show -p FragmentPath --value vps-resources.timer)")
+check '[ "$fragment" = /home/ubuntu/LalaBot/vps-resources.timer ]' "timer is linked from the repo ($fragment)"
+check '[ "$(systemctl is-active vps-resources.timer)" = active ]' "timer is running"
+check '[ "$(systemctl show -p Result --value vps-resources.service)" = success ]' "last check succeeded"
+
 printf '\n\033[35mshared\033[0m\n'
 check '[ -s /home/ubuntu/.config/failure-webhook-url ]' "crash alert webhook URL file exists"
 check 'command -v curl >/dev/null' "curl is installed"
