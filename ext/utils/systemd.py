@@ -5,8 +5,33 @@ import logging
 import os
 import socket
 import sys
+from typing import TYPE_CHECKING
+
+from . import shell
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 log = logging.getLogger(__name__)
+
+
+async def show_services(services: Iterable[str], properties: Iterable[str]) -> dict[str, dict[str, str]]:
+    """Get the given properties of systemd services via ``systemctl show``, keyed by the service name.
+
+    Timestamps come as ``@<unix seconds>``. Raises ``RuntimeError`` when ``systemctl`` fails.
+    """
+    returncode, output = await shell.run(
+        "systemctl", "show", *services, f"--property=Id,{','.join(properties)}", "--timestamp=unix"
+    )
+    if returncode != 0:
+        msg = f"systemctl show exited with code {returncode}: {output.strip()}"
+        raise RuntimeError(msg)
+    result: dict[str, dict[str, str]] = {}
+    # `systemctl show` prints one block of `Key=Value` lines per unit, separated by blank lines.
+    for block in output.strip().split("\n\n"):
+        props = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+        result[props.pop("Id", "?").removesuffix(".service")] = props
+    return result
 
 
 def is_systemd_service() -> bool:

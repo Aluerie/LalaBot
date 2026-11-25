@@ -46,4 +46,6 @@ LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bo
 * **Database backups** — after every successful backup LalaBot pings a daily healthchecks.io check
   (`BACKUP_HEALTHCHECK_URL` in `config.py`), and pings its `/fail` URL when the daily backup fails.
   So healthchecks.io alerts both on a failed backup and on a day without one.
+* **LalaBot's Discord status** — every minute LalaBot checks the other bots' services and shows the result
+  in its status: 🟢 online "All 3 bots up", 🟡 idle while one is (re)starting, 🔴 Do Not Disturb when one is down.
 * **Check it all** — `make monitoring` shows whether every bot and the timer above are set up on the VPS.

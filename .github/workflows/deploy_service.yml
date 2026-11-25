@@ -29,7 +29,7 @@ jobs:
         run: uv run ty check
 
       - name: Import the bot and its extensions
-        run: uv run python -c "import main, ext.backup, ext.cmd, ext.health, ext.services"
+        run: uv run python -c "import main, ext.backup, ext.cmd, ext.health, ext.presence, ext.services"
 
   deploy:
     needs: check

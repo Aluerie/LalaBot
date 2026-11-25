@@ -12,6 +12,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from .utils import const, shell
+from .utils.systemd import show_services
 
 if TYPE_CHECKING:
     from main import LalaBot
@@ -156,22 +157,14 @@ class Services(commands.Cog):
     async def status(self, interaction: discord.Interaction[LalaBot]) -> None:
         """📊 Show whether each bot is running, since when, and how many times systemd auto-restarted it."""
         await interaction.response.defer()
-        returncode, output = await shell.run(
-            "systemctl",
-            "show",
-            *const.SERVICES,
-            "--property=Id,ActiveState,SubState,ActiveEnterTimestamp,NRestarts",
-            "--timestamp=unix",
-        )
-        if returncode != 0:
-            await interaction.followup.send(f"❌ `systemctl show` exited with code {returncode}.\n{codeblock(output)}")
+        try:
+            services = await show_services(const.SERVICES, ["ActiveState", "SubState", "ActiveEnterTimestamp", "NRestarts"])
+        except RuntimeError as error:
+            await interaction.followup.send(f"❌ {codeblock(str(error))}")
             return
 
         lines: list[str] = []
-        # `systemctl show` prints one block of `Key=Value` lines per unit, separated by blank lines.
-        for block in output.strip().split("\n\n"):
-            props = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
-            name = props.get("Id", "?").removesuffix(".service")
+        for name, props in services.items():
             state = props.get("ActiveState", "?")
             line = f"{STATE_EMOJIS.get(state, '❔')} {label(name)} {state} ({props.get('SubState', '?')})"
             if state == "active" and (timestamp := props.get("ActiveEnterTimestamp", "")).startswith("@"):

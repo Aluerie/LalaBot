@@ -8,7 +8,7 @@ import discord
 from discord.ext import commands
 
 from config import TOKEN
-from ext.utils.systemd import sd_notify, watchdog_loop
+from ext.utils.systemd import is_systemd_service, sd_notify, watchdog_loop
 
 log = logging.getLogger(__name__)
 
@@ -16,6 +16,7 @@ initial_extensions = (
     "ext.backup",
     "ext.cmd",
     "ext.health",
+    "ext.presence",
     "ext.services",
 )
 
@@ -30,10 +31,8 @@ class LalaBot(commands.Bot):
             command_prefix=commands.when_mentioned,
             help_command=None,
             intents=intents,
-            activity=discord.Streaming(
-                name='\N{BLACK HEART} type "/" in #jailed_bots',
-                url="https://www.twitch.tv/irene_adler__",
-            ),
+            # In prod, `ext.presence` replaces it with whether the other bots are up once the first check is done.
+            activity=discord.CustomActivity("👀 Checking the bots…" if is_systemd_service() else "🏠 Running at home"),
         )
         self.watchdog_task: asyncio.Task[None] | None = None
 
