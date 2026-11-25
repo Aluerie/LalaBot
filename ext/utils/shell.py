@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import cast
+
+# Variables systemd gives this service for talking back to it; they're meant for the bot's own process only.
+# A child that inherits them may notify systemd too, which logs "reception only permitted for main PID".
+SYSTEMD_NOTIFY_VARIABLES = ("NOTIFY_SOCKET", "WATCHDOG_USEC", "WATCHDOG_PID")
+
+
+def child_env() -> dict[str, str]:
+    """Get this process's environment for a child process, minus the systemd notify variables."""
+    return {key: value for key, value in os.environ.items() if key not in SYSTEMD_NOTIFY_VARIABLES}
 
 
 # `timeout` is a parameter, not left to the caller's `asyncio.timeout`: cancelling would leave the process running.
@@ -14,6 +24,7 @@ async def run(*args: str, timeout: float = 60.0) -> tuple[int, str]:  # noqa: AS
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        env=child_env(),
     )
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(), timeout)

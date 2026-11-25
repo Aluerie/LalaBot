@@ -5,6 +5,7 @@ import logging
 import os
 import socket
 import sys
+import time
 from typing import TYPE_CHECKING
 
 from . import shell
@@ -18,11 +19,9 @@ log = logging.getLogger(__name__)
 async def show_services(services: Iterable[str], properties: Iterable[str]) -> dict[str, dict[str, str]]:
     """Get the given properties of systemd services via ``systemctl show``, keyed by the service name.
 
-    Timestamps come as ``@<unix seconds>``. Raises ``RuntimeError`` when ``systemctl`` fails.
+    Raises ``RuntimeError`` when ``systemctl`` fails.
     """
-    returncode, output = await shell.run(
-        "systemctl", "show", *services, f"--property=Id,{','.join(properties)}", "--timestamp=unix"
-    )
+    returncode, output = await shell.run("systemctl", "show", *services, f"--property=Id,{','.join(properties)}")
     if returncode != 0:
         msg = f"systemctl show exited with code {returncode}: {output.strip()}"
         raise RuntimeError(msg)
@@ -32,6 +31,17 @@ async def show_services(services: Iterable[str], properties: Iterable[str]) -> d
         props = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
         result[props.pop("Id", "?").removesuffix(".service")] = props
     return result
+
+
+def monotonic_to_unix(usec: str) -> int | None:
+    """Convert a systemd ``*TimestampMonotonic`` property (microseconds since boot) to a Unix timestamp.
+
+    Returns ``None`` for ``0``, which systemd uses for "never". The monotonic clock is the same one Python's
+    ``time.monotonic()`` reads on Linux, so this needs no timezone or date parsing.
+    """
+    if not usec.isdigit() or int(usec) == 0:
+        return None
+    return round(time.time() - time.monotonic() + int(usec) / 1_000_000)
 
 
 def is_systemd_service() -> bool:

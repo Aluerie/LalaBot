@@ -12,7 +12,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from .utils import const, shell
-from .utils.systemd import show_services
+from .utils.systemd import monotonic_to_unix, show_services
 
 if TYPE_CHECKING:
     from main import LalaBot
@@ -158,7 +158,9 @@ class Services(commands.Cog):
         """📊 Show whether each bot is running, since when, and how many times systemd auto-restarted it."""
         await interaction.response.defer()
         try:
-            services = await show_services(const.SERVICES, ["ActiveState", "SubState", "ActiveEnterTimestamp", "NRestarts"])
+            services = await show_services(
+                const.SERVICES, ["ActiveState", "SubState", "ActiveEnterTimestampMonotonic", "NRestarts"]
+            )
         except RuntimeError as error:
             await interaction.followup.send(f"❌ {codeblock(str(error))}")
             return
@@ -167,8 +169,8 @@ class Services(commands.Cog):
         for name, props in services.items():
             state = props.get("ActiveState", "?")
             line = f"{STATE_EMOJIS.get(state, '❔')} {label(name)} {state} ({props.get('SubState', '?')})"
-            if state == "active" and (timestamp := props.get("ActiveEnterTimestamp", "")).startswith("@"):
-                line += f" since <t:{timestamp.removeprefix('@')}:R>"
+            if state == "active" and (since := monotonic_to_unix(props.get("ActiveEnterTimestampMonotonic", ""))):
+                line += f" since <t:{since}:R>"
             if (restarts := props.get("NRestarts", "0")) != "0":
                 line += f", auto-restarted {restarts} times"
             lines.append(line)
