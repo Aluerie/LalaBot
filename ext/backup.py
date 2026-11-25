@@ -24,6 +24,27 @@ log = logging.getLogger(__name__)
 
 BACKUP_HEALTHCHECK_URL: str | None = getattr(config, "BACKUP_HEALTHCHECK_URL", None)
 
+# A full dump is ~1.2 MB (November 2026); far below that means something went wrong, not that the data shrank.
+MIN_DUMP_BYTES = 100_000
+# The last line of every complete plain-text `pg_dump` output.
+DUMP_COMPLETE_MARKER = b"-- PostgreSQL database dump complete"
+
+
+def check_dump(path: Path) -> None:
+    """Raise ``RuntimeError`` unless the dump at ``path`` looks complete.
+
+    Guards against posting an empty or cut-off file as a "successful" backup when ``pg_dump`` exits with 0 anyway.
+    """
+    size = path.stat().st_size
+    if size < MIN_DUMP_BYTES:
+        msg = f"The dump is only {size} bytes, expected at least {MIN_DUMP_BYTES}."
+        raise RuntimeError(msg)
+    with path.open("rb") as file:
+        file.seek(-1024, 2)  # the end of the file is enough, and `size` is known to be bigger than this
+        if DUMP_COMPLETE_MARKER not in file.read():
+            msg = f"The dump ({size} bytes) doesn't end with {DUMP_COMPLETE_MARKER.decode()!r}, so it's cut off."
+            raise RuntimeError(msg)
+
 
 async def ping_backup_healthcheck(*, failed: bool = False) -> None:
     """Ping the healthchecks.io check of the backups: after every successful backup, or with ``/fail`` after a failed one.
@@ -83,6 +104,7 @@ class Backup(commands.Cog):
             if returncode != 0:
                 msg = f"pg_dump exited with code {returncode}: {output.strip()}"
                 raise RuntimeError(msg)
+            check_dump(path)
             thread = await self.get_backup_thread()
             await thread.send(file=discord.File(path))
         await ping_backup_healthcheck()
