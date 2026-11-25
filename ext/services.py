@@ -74,7 +74,7 @@ class Services(commands.Cog):
             await interaction.response.send_message(content)
 
     @app_commands.command()
-    @app_commands.default_permissions(administrator=True)
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.choices(service=SERVICE_CHOICES)
     async def systemctl(
         self,
@@ -105,7 +105,7 @@ class Services(commands.Cog):
         await interaction.followup.send(message)
 
     @app_commands.command()
-    @app_commands.default_permissions(administrator=True)
+    @app_commands.default_permissions(manage_guild=True)
     async def status(self, interaction: discord.Interaction[LalaBot]) -> None:
         """Show whether each service is running, since when, and how many times systemd restarted it."""
         await interaction.response.defer()
@@ -135,7 +135,7 @@ class Services(commands.Cog):
         await interaction.followup.send("\n".join(lines))
 
     @app_commands.command()
-    @app_commands.default_permissions(administrator=True)
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.choices(service=SERVICE_CHOICES)
     async def journal(
         self,
@@ -161,7 +161,7 @@ class Services(commands.Cog):
         await interaction.followup.send(file=file)
 
     @app_commands.command()
-    @app_commands.default_permissions(administrator=True)
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.choices(service=SERVICE_CHOICES)
     async def tail(
         self,
@@ -204,7 +204,7 @@ class Services(commands.Cog):
         await interaction.followup.send(f"{header}\n```\n{body}\n```")
 
     @app_commands.command()
-    @app_commands.default_permissions(administrator=True)
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.choices(service=LOG_FILE_CHOICES)
     async def logs(self, interaction: discord.Interaction[LalaBot], service: str) -> None:
         """Get the log file that a bot writes itself.

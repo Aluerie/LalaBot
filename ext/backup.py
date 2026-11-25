@@ -78,7 +78,7 @@ class Backup(commands.Cog):
         await self.bot.wait_until_ready()
 
     @app_commands.command()
-    @app_commands.default_permissions(administrator=True)
+    @app_commands.default_permissions(manage_guild=True)
     async def backup(self, interaction: discord.Interaction[LalaBot]) -> None:
         """Back up the database to the bot-stuff forum right now."""
         if interaction.user.id != const.OWNER_ID:
