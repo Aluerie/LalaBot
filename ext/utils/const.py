@@ -5,7 +5,8 @@ MADGE_EMOTE = "<:DankMadgeThreat:1125591898241892482>"
 
 # Discord Snowflakes
 OWNER_ID = 312204139751014400
-DATABASE_BACKUP_CHANNEL_ID = 1541985585810378823
+# Posts (threads) in the bot-stuff forum channel, one per bot feature that posts to Discord.
+DATABASE_BACKUP_THREAD_ID = 1575256163321389096
 
 # VPS
 # systemd services on the VPS, mapped to the log file the bot writes (`None`: the bot only logs to the journal).

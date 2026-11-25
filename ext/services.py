@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import io
+import json
 import logging
 from typing import TYPE_CHECKING, Literal, override
 
@@ -33,6 +35,16 @@ STATE_EMOJIS = {
 def codeblock(text: str, limit: int = 1800) -> str:
     """Wrap the tail of ``text`` (where commands put their errors) into a Discord code block."""
     return f"```\n{text.strip()[-limit:]}\n```"
+
+
+def format_journal_entry(line: str) -> str:
+    """Turn one line of ``journalctl --output=json`` into a short ``HH:MM:SS message`` line (time in UTC)."""
+    entry = json.loads(line)
+    timestamp = dt.datetime.fromtimestamp(int(entry["__REALTIME_TIMESTAMP"]) / 1_000_000, tz=dt.UTC)
+    message = entry.get("MESSAGE")
+    if isinstance(message, list):  # journald stores messages that aren't valid UTF-8 as a list of bytes
+        message = bytes(message).decode(errors="replace")
+    return f"{timestamp:%H:%M:%S} {message or ''}"
 
 
 class Services(commands.Cog):
@@ -147,6 +159,49 @@ class Services(commands.Cog):
             return
         file = discord.File(io.BytesIO(output.encode()), filename=f"{service}-journal.log")
         await interaction.followup.send(file=file)
+
+    @app_commands.command()
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.choices(service=SERVICE_CHOICES)
+    async def tail(
+        self,
+        interaction: discord.Interaction[LalaBot],
+        service: str,
+        lines: app_commands.Range[int, 1, 200] = 30,
+    ) -> None:
+        """Show the last lines of a service's systemd journal right in the chat.
+
+        Parameters
+        ----------
+        service
+            Service to show the journal of.
+        lines
+            How many of the latest lines to show at most; older ones are cut to fit into one message.
+        """
+        await interaction.response.defer()
+        returncode, output = await shell.run(
+            "sudo", "journalctl", f"--unit={service}", f"--lines={lines}", "--output=json", "--output-fields=MESSAGE"
+        )
+        if returncode != 0:
+            await interaction.followup.send(f"❌ `journalctl` exited with code {returncode}.\n{codeblock(output)}")
+            return
+
+        entries = [format_journal_entry(line) for line in output.splitlines() if line.startswith("{")]
+        # Take the newest lines that fit into one message, keeping room for the header and code block fences.
+        shown: list[str] = []
+        budget = 1900
+        for entry in reversed(entries):
+            if len(entry) + 1 > budget:
+                if not shown:  # the newest line alone is too long, so show its start
+                    shown.append(entry[:budget])
+                break
+            shown.append(entry)
+            budget -= len(entry) + 1
+        shown.reverse()
+
+        header = f"📓 Last {len(shown)} journal lines of `{service}` (UTC):"
+        body = "\n".join(shown).replace("```", "`\N{ZERO WIDTH SPACE}``") or "(empty)"
+        await interaction.followup.send(f"{header}\n```\n{body}\n```")
 
     @app_commands.command()
     @app_commands.default_permissions(administrator=True)

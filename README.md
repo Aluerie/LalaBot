@@ -10,10 +10,18 @@ All of them are owner-only.
 
 * `/systemctl <restart|stop|start> <service>` — run `sudo systemctl` on a bot's service.
 * `/status` — whether each service is running, since when, and how many times systemd auto-restarted it.
+* `/tail <service> [lines]` — the latest lines of a service's systemd journal, right in the chat as a code block.
 * `/journal <service> [lines]` — the latest lines of a service's systemd journal, as a file.
 * `/logs <service>` — the log file a bot writes itself (`.temp/*.log` in its folder), as a file.
-* `/backup` — back up the VPS PostgreSQL database to the backup channel right now.
+* `/backup` — back up the VPS PostgreSQL database right now.
   It also happens on its own every day at 18:05 UTC.
+
+## 🗂️ Bot-stuff forum
+
+Whatever LalaBot posts on its own (e.g. database backups) goes to a forum channel,
+one post per feature, so features don't need a channel each.
+Each post is created by hand, and its thread ID goes into [ext/utils/const.py](ext/utils/const.py).
+LalaBot needs these permissions in the forum: View Channel, Send Messages in Posts and Attach Files.
 
 ## ⚙️ Config
 
