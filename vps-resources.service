@@ -1,4 +1,5 @@
-; Checks the VPS's disk space and memory; started every 5 minutes by vps-resources.timer.
+; Checks the VPS's disk space and memory, and announces crashed services that are back up;
+; started every 5 minutes by vps-resources.timer.
 ; One-time setup: symlink both files into /etc/systemd/system/, so `git pull` updates them
 ; and LalaBot's deploy (`daemon-reload`) applies the changes:
 ; sudo systemctl link /home/ubuntu/LalaBot/vps-resources.service
@@ -9,9 +10,10 @@
 ; journalctl -u vps-resources -e
 
 [Unit]
-Description=Check the VPS's disk space and memory
+Description=Check the VPS's disk space and memory, and announce crashed services that are back up
 
 [Service]
 Type=oneshot
 User=ubuntu
 ExecStart=/bin/sh /home/ubuntu/LalaBot/scripts/check_resources.sh
+ExecStart=/bin/sh /home/ubuntu/LalaBot/scripts/check_recoveries.sh

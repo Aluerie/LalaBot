@@ -39,6 +39,8 @@ LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bo
   right away whenever a service crashes, gets killed by the watchdog, or fails to start.
   The webhook URL lives on the VPS in `/home/ubuntu/.config/failure-webhook-url`.
   A crash loop only posts once per 30 minutes per service, counting the failures in between.
+  Once a crashed service has run steadily for 5 minutes, [scripts/check_recoveries.sh](scripts/check_recoveries.sh)
+  (run by `vps-resources.timer`) posts "✅ back up", with how many more failures there were since the alert.
 * **systemd watchdog** — with `Type=notify` + `WatchdogSec=`, a bot whose event loop gets stuck is restarted automatically.
 * **Disk space and memory** — `vps-resources.timer` runs [scripts/check_resources.sh](scripts/check_resources.sh)
   every 5 minutes, which posts to the same webhook when `/` is 90%+ full or less than 10% of RAM is available,
