@@ -1,5 +1,5 @@
-; sudo cp lalabot.service /etc/systemd/system/lalabot.service
-; sudo systemctl daemon-reload
+; Linked (not copied) into systemd, so `git pull` + `daemon-reload` (done by the deploy) applies changes to this file:
+; sudo systemctl link /home/ubuntu/LalaBot/lalabot.service
 ; sudo systemctl enable lalabot
 ; sudo systemctl start lalabot
 ; journalctl -u lalabot -e

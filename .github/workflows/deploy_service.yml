@@ -47,4 +47,5 @@ jobs:
             cd ./LalaBot
             git pull --ff-only
             ~/.local/bin/uv sync --no-dev
+            sudo systemctl daemon-reload
             sudo systemctl restart lalabot.service
