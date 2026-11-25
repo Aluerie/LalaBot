@@ -1,7 +1,7 @@
 {
     "python.REPL.enableREPLSmartSend": false,
     "cSpell.words": [
-        "lalabot",
-        "LALAWATCH"
+        "healthchecks",
+        "lalabot"
     ]
 }

@@ -11,7 +11,6 @@ from config import TOKEN
 from ext.utils.systemd import sd_notify, watchdog_loop
 
 log = logging.getLogger(__name__)
-log.setLevel(logging.INFO)
 
 initial_extensions = (
     "ext.cmd",
@@ -34,6 +33,7 @@ class LalaBot(commands.Bot):
                 url="https://www.twitch.tv/irene_adler__",
             ),
         )
+        self.watchdog_task: asyncio.Task[None] | None = None
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s", self.user)
