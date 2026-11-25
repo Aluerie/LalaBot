@@ -8,13 +8,14 @@ import discord
 from discord.ext import commands
 
 from config import TOKEN
+from ext.utils.systemd import sd_notify, watchdog_loop
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
 initial_extensions = (
-    "ext.watcher",
     "ext.cmd",
+    "ext.health",
 )
 
 
@@ -22,8 +23,6 @@ class LalaBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents(
             guilds=True,
-            members=True,
-            presences=True,
             messages=True,
         )
         super().__init__(
@@ -41,6 +40,8 @@ class LalaBot(commands.Bot):
 
     @override
     async def setup_hook(self) -> None:
+        sd_notify("READY=1")
+        self.watchdog_task = asyncio.create_task(watchdog_loop())
         for extension in initial_extensions:
             try:
                 await self.load_extension(extension)

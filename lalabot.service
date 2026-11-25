@@ -1,4 +1,4 @@
-; sudo nano /etc/systemd/system/lalabot.service
+; sudo cp lalabot.service /etc/systemd/system/lalabot.service
 ; sudo systemctl daemon-reload
 ; sudo systemctl enable lalabot
 ; sudo systemctl start lalabot
@@ -10,12 +10,19 @@ Wants=network-online.target
 After=network-online.target
 
 [Service]
-Type=simple
+; notify + watchdog: the bot reports READY=1 on start, then pings WATCHDOG=1;
+; if the pings stop (stuck event loop), systemd kills and restarts it.
+Type=notify
+WatchdogSec=120
 WorkingDirectory=/home/ubuntu/LalaBot/
-ExecStart=/home/ubuntu/.local/bin/uv run main.py
-; ExecStart=/home/ubuntu/LalaBot/.venv/bin/python3.12 main.py
+; venv python directly (not `uv run`), so the bot itself is the main process:
+; systemd's notify messages, signals and exit codes then refer to the bot, not to uv.
+ExecStart=/home/ubuntu/LalaBot/.venv/bin/python main.py
+; post a Discord webhook message whenever the service stops for any reason other than a clean stop/restart
+ExecStopPost=/bin/sh /home/ubuntu/LalaBot/scripts/notify_failure.sh %n
 User=ubuntu
 Restart=always
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target
