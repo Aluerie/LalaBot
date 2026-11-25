@@ -42,11 +42,10 @@ class LalaBot(commands.Bot):
     async def setup_hook(self) -> None:
         sd_notify("READY=1")
         self.watchdog_task = asyncio.create_task(watchdog_loop())
+        # No try/except: a broken extension should crash the bot, so the crash alert fires and systemd retries,
+        # instead of LalaBot staying online (and pinging healthchecks.io) without its commands.
         for extension in initial_extensions:
-            try:
-                await self.load_extension(extension)
-            except Exception:
-                log.exception("Failed to load extension %s.", extension)
+            await self.load_extension(extension)
 
 
 async def run_bot() -> None:
