@@ -28,6 +28,7 @@ class Cmd(commands.Cog):
         await ctx.send(f"synced the tree {const.MADGE_EMOTE}")
 
     @app_commands.command()
+    @app_commands.default_permissions(administrator=True)
     async def systemctl(
         self,
         interaction: discord.Interaction[LalaBot],
@@ -39,7 +40,14 @@ class Cmd(commands.Cog):
             await interaction.response.send_message(f"{const.MADGE_EMOTE} Not for you.", ephemeral=True)
             return
 
-        if service == "lalabot" and request != "start":
+        if service == "lalabot" and request == "stop":
+            await interaction.response.send_message(
+                f"{const.MADGE_EMOTE} Stopping LalaBot can't be undone from Discord. Use SSH if you really mean it.",
+                ephemeral=True,
+            )
+            return
+
+        if service == "lalabot" and request == "restart":
             # The command below kills this very process, so there would be nobody left to send the result.
             await interaction.response.send_message(f"Running `sudo systemctl {request} {service}`, bye.")
             await asyncio.create_subprocess_exec("sudo", "systemctl", request, service)
@@ -61,7 +69,7 @@ class Cmd(commands.Cog):
             await interaction.followup.send("Something went wrong, see logs.")
             return
 
-        output = stdout.decode(errors="replace").strip()[:1800]
+        output = stdout.decode(errors="replace").strip()[-1800:]  # the tail, where systemctl puts the error
         status = "✅" if process.returncode == 0 else "❌"
         message = f"{status} `sudo systemctl {request} {service}` exited with code {process.returncode}."
         if output:
