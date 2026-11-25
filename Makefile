@@ -36,3 +36,9 @@ help:  # Show this help
 .SILENT: scp
 scp:  # Copy config.py to the VPS
 	scp config.py $(VPS):~/LalaBot/config.py
+
+
+.PHONY: monitoring
+.SILENT: monitoring
+monitoring:  # Check every bot's outage alerts setup on the VPS
+	ssh $(VPS) sh LalaBot/scripts/check_monitoring.sh
