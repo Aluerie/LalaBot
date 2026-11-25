@@ -3,6 +3,10 @@
 A small Discord bot to control my bots' systemd services from Discord (`/systemctl`),
 e.g. to restart [my main bot](https://github.com/Aluerie/AluBot) when it is broken.
 
+## ⚙️ Config
+
+Copy [config.example.py](config.example.py) to `config.py` (git-ignored) and fill in the values.
+
 ## 🩺 Monitoring
 
 LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bot:
