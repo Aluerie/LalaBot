@@ -8,6 +8,8 @@ from discord.ext import commands, tasks
 
 import config
 
+from .utils.systemd import is_systemd_service
+
 if TYPE_CHECKING:
     from main import LalaBot
 
@@ -21,6 +23,7 @@ class Health(commands.Cog):
     """Pings an external healthchecks.io check while the bot is connected to Discord.
 
     When the pings stop (bot down, stuck, disconnected, or the whole VPS down), healthchecks.io alerts the owner.
+    Only pings when running as a systemd service, so a local run at home can't hide an outage in prod.
     """
 
     def __init__(self, bot: LalaBot) -> None:
@@ -29,6 +32,9 @@ class Health(commands.Cog):
 
     @override
     async def cog_load(self) -> None:
+        if not is_systemd_service():
+            log.info("Not running as a systemd service, so not pinging healthchecks.io.")
+            return
         if HEALTHCHECK_URL is None:
             log.warning("HEALTHCHECK_URL is not set in config.py, so nothing reports that LalaBot is alive.")
             return
@@ -43,7 +49,10 @@ class Health(commands.Cog):
 
     @tasks.loop(minutes=5)
     async def ping_loop(self) -> None:
-        if HEALTHCHECK_URL is None or self.session is None or not self.bot.is_ready():
+        if HEALTHCHECK_URL is None or self.session is None:
+            return
+        # `is_ready()` stays True while discord.py reconnects, so also require a live gateway connection.
+        if not self.bot.is_ready() or self.bot.ws is None or not self.bot.ws.open:
             return
         try:
             async with self.session.get(HEALTHCHECK_URL) as response:

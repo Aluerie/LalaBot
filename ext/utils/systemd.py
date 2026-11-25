@@ -9,6 +9,14 @@ import sys
 log = logging.getLogger(__name__)
 
 
+def is_systemd_service() -> bool:
+    """Whether this process runs as a systemd service, i.e. in prod on the VPS rather than at home.
+
+    systemd sets ``INVOCATION_ID`` in the environment of every service it starts.
+    """
+    return "INVOCATION_ID" in os.environ
+
+
 def sd_notify(state: str) -> None:
     """Send a state message such as ``READY=1`` or ``WATCHDOG=1`` to systemd.
 
