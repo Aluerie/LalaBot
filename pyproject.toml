@@ -38,6 +38,12 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "lf"
 
+[dependency-groups]
+dev = [
+    "ruff>=0.17.6",
+    "ty>=0.0.110",
+]
+
 
 [tool.ruff.lint.isort]
 split-on-trailing-comma = true
