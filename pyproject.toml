@@ -1,10 +1,13 @@
 [project]
 name = "lalabot"
 version = "0.1.0"
-description = "Discord bot that watches over AluBot and IreBot and pings the owner when they go down"
+description = "🤖 Discord bot to control my bots' systemd services from Discord"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["discord-py>=2.6.4"]
+dependencies = [
+    "aiohttp>=3.13.3",
+    "discord-py>=2.6.4",
+]
 
 [tool.ruff]
 line-length = 125

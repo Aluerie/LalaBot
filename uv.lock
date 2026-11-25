@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -294,11 +294,15 @@ name = "lalabot"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "discord-py" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "discord-py", specifier = ">=2.6.4" }]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.13.3" },
+    { name = "discord-py", specifier = ">=2.6.4" },
+]
 
 [[package]]
 name = "multidict"
