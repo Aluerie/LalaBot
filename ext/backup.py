@@ -80,7 +80,7 @@ class Backup(commands.Cog):
     @app_commands.command()
     @app_commands.default_permissions(manage_guild=True)
     async def backup(self, interaction: discord.Interaction[LalaBot]) -> None:
-        """Back up the database to the bot-stuff forum right now."""
+        """💾 Back up the database to the bot-stuff forum right now."""
         if interaction.user.id != const.OWNER_ID:
             await interaction.response.send_message(f"{const.MADGE_EMOTE} Not for you.", ephemeral=True)
             return

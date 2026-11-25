@@ -8,7 +8,8 @@ so I can manage them from Discord, e.g. restart one from my phone when it is bro
 
 All of them are owner-only.
 
-* `/systemctl <restart|stop|start> <service>` — run `sudo systemctl` on a bot's service.
+* `/restart <service>`, `/start <service>`, `/stop <service>` — run `sudo systemctl` on a bot's service.
+  LalaBot can only be restarted from Discord: once stopped, nothing could start it back.
 * `/status` — whether each service is running, since when, and how many times systemd auto-restarted it.
 * `/tail <service> [lines]` — the latest lines of a service's systemd journal, right in the chat as a code block.
 * `/journal <service> [lines]` — the latest lines of a service's systemd journal, as a file.

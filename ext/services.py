@@ -19,9 +19,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-SERVICE_CHOICES = [app_commands.Choice(name=service, value=service) for service in const.SERVICES]
-LOG_FILE_CHOICES = [app_commands.Choice(name=service, value=service) for service, path in const.SERVICES.items() if path]
-
 STATE_EMOJIS = {
     "active": "🟢",
     "reloading": "🟡",
@@ -30,6 +27,21 @@ STATE_EMOJIS = {
     "inactive": "⚫",
     "failed": "🔴",
 }
+
+
+def service_choices(*, exclude: tuple[str, ...] = (), with_log_file: bool = False) -> list[app_commands.Choice[str]]:
+    """Build the choices of a ``service`` option: every service with its emoji, minus the excluded ones."""
+    return [
+        app_commands.Choice(name=f"{service.emoji} {name}", value=name)
+        for name, service in const.SERVICES.items()
+        if name not in exclude and (service.log_file or not with_log_file)
+    ]
+
+
+def label(name: str) -> str:
+    """Format a service name for a Discord message, with its emoji."""
+    service = const.SERVICES.get(name)
+    return f"{service.emoji} **{name}**" if service else f"**{name}**"
 
 
 def codeblock(text: str, limit: int = 1800) -> str:
@@ -73,29 +85,15 @@ class Services(commands.Cog):
         else:
             await interaction.response.send_message(content)
 
-    @app_commands.command()
-    @app_commands.default_permissions(manage_guild=True)
-    @app_commands.choices(service=SERVICE_CHOICES)
+    # --- START / STOP / RESTART ---------------------------------------------------------------------------------------
+
+    @staticmethod
     async def systemctl(
-        self,
         interaction: discord.Interaction[LalaBot],
         request: Literal["restart", "stop", "start"],
         service: str,
     ) -> None:
-        """Perform a `sudo systemctl` shell command."""
-        if service == "lalabot" and request == "stop":
-            await interaction.response.send_message(
-                f"{const.MADGE_EMOTE} Stopping LalaBot can't be undone from Discord. Use SSH if you really mean it.",
-                ephemeral=True,
-            )
-            return
-
-        if service == "lalabot" and request == "restart":
-            # The command below kills this very process, so there would be nobody left to send the result.
-            await interaction.response.send_message(f"Running `sudo systemctl {request} {service}`, bye.")
-            await asyncio.create_subprocess_exec("sudo", "systemctl", request, service)
-            return
-
+        """Run ``sudo systemctl <request> <service>`` and reply with how it went."""
         await interaction.response.defer()
         returncode, output = await shell.run("sudo", "systemctl", request, service)
         status = "✅" if returncode == 0 else "❌"
@@ -106,8 +104,57 @@ class Services(commands.Cog):
 
     @app_commands.command()
     @app_commands.default_permissions(manage_guild=True)
+    @app_commands.choices(service=service_choices())
+    async def restart(self, interaction: discord.Interaction[LalaBot], service: str) -> None:
+        """🔄 Restart a bot's systemd service.
+
+        Parameters
+        ----------
+        service
+            Bot to restart.
+        """
+        if service == "lalabot":
+            # The command below kills this very process, so there would be nobody left to send the result.
+            await interaction.response.send_message(f"🔄 Restarting {label(service)}, bye.")
+            await asyncio.create_subprocess_exec("sudo", "systemctl", "restart", service)
+            return
+        await self.systemctl(interaction, "restart", service)
+
+    # LalaBot isn't among /start and /stop choices: it's already running if it gets the command,
+    # and once stopped, nobody could start it back from Discord.
+
+    @app_commands.command()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.choices(service=service_choices(exclude=("lalabot",)))
+    async def start(self, interaction: discord.Interaction[LalaBot], service: str) -> None:
+        """▶️ Start a bot's stopped systemd service.
+
+        Parameters
+        ----------
+        service
+            Bot to start.
+        """
+        await self.systemctl(interaction, "start", service)
+
+    @app_commands.command()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.choices(service=service_choices(exclude=("lalabot",)))
+    async def stop(self, interaction: discord.Interaction[LalaBot], service: str) -> None:
+        """⏹️ Stop a bot's systemd service; it stays down until /start.
+
+        Parameters
+        ----------
+        service
+            Bot to stop.
+        """
+        await self.systemctl(interaction, "stop", service)
+
+    # --- STATUS / JOURNAL / LOGS --------------------------------------------------------------------------------------
+
+    @app_commands.command()
+    @app_commands.default_permissions(manage_guild=True)
     async def status(self, interaction: discord.Interaction[LalaBot]) -> None:
-        """Show whether each service is running, since when, and how many times systemd restarted it."""
+        """📊 Show whether each bot is running, since when, and how many times systemd auto-restarted it."""
         await interaction.response.defer()
         returncode, output = await shell.run(
             "systemctl",
@@ -126,7 +173,7 @@ class Services(commands.Cog):
             props = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
             name = props.get("Id", "?").removesuffix(".service")
             state = props.get("ActiveState", "?")
-            line = f"{STATE_EMOJIS.get(state, '❔')} **{name}** {state} ({props.get('SubState', '?')})"
+            line = f"{STATE_EMOJIS.get(state, '❔')} {label(name)} {state} ({props.get('SubState', '?')})"
             if state == "active" and (timestamp := props.get("ActiveEnterTimestamp", "")).startswith("@"):
                 line += f" since <t:{timestamp.removeprefix('@')}:R>"
             if (restarts := props.get("NRestarts", "0")) != "0":
@@ -136,45 +183,19 @@ class Services(commands.Cog):
 
     @app_commands.command()
     @app_commands.default_permissions(manage_guild=True)
-    @app_commands.choices(service=SERVICE_CHOICES)
-    async def journal(
-        self,
-        interaction: discord.Interaction[LalaBot],
-        service: str,
-        lines: app_commands.Range[int, 1, 20_000] = 5000,
-    ) -> None:
-        """Get the last lines of a service's systemd journal as a file.
-
-        Parameters
-        ----------
-        service
-            Service to get the journal of.
-        lines
-            How many of the latest lines to get.
-        """
-        await interaction.response.defer()
-        returncode, output = await shell.run("sudo", "journalctl", f"--unit={service}", f"--lines={lines}", "--no-pager")
-        if returncode != 0:
-            await interaction.followup.send(f"❌ `journalctl` exited with code {returncode}.\n{codeblock(output)}")
-            return
-        file = discord.File(io.BytesIO(output.encode()), filename=f"{service}-journal.log")
-        await interaction.followup.send(file=file)
-
-    @app_commands.command()
-    @app_commands.default_permissions(manage_guild=True)
-    @app_commands.choices(service=SERVICE_CHOICES)
+    @app_commands.choices(service=service_choices())
     async def tail(
         self,
         interaction: discord.Interaction[LalaBot],
         service: str,
         lines: app_commands.Range[int, 1, 200] = 30,
     ) -> None:
-        """Show the last lines of a service's systemd journal right in the chat.
+        """📓 Show the last lines of a bot's systemd journal right in the chat.
 
         Parameters
         ----------
         service
-            Service to show the journal of.
+            Bot to show the journal of.
         lines
             How many of the latest lines to show at most; older ones are cut to fit into one message.
         """
@@ -199,22 +220,48 @@ class Services(commands.Cog):
             budget -= len(entry) + 1
         shown.reverse()
 
-        header = f"📓 Last {len(shown)} journal lines of `{service}` (UTC):"
+        header = f"📓 Last {len(shown)} journal lines of {label(service)} (UTC):"
         body = "\n".join(shown).replace("```", "`\N{ZERO WIDTH SPACE}``") or "(empty)"
         await interaction.followup.send(f"{header}\n```\n{body}\n```")
 
     @app_commands.command()
     @app_commands.default_permissions(manage_guild=True)
-    @app_commands.choices(service=LOG_FILE_CHOICES)
+    @app_commands.choices(service=service_choices())
+    async def journal(
+        self,
+        interaction: discord.Interaction[LalaBot],
+        service: str,
+        lines: app_commands.Range[int, 1, 20_000] = 5000,
+    ) -> None:
+        """📁 Get the last lines of a bot's systemd journal as a file.
+
+        Parameters
+        ----------
+        service
+            Bot to get the journal of.
+        lines
+            How many of the latest lines to get.
+        """
+        await interaction.response.defer()
+        returncode, output = await shell.run("sudo", "journalctl", f"--unit={service}", f"--lines={lines}", "--no-pager")
+        if returncode != 0:
+            await interaction.followup.send(f"❌ `journalctl` exited with code {returncode}.\n{codeblock(output)}")
+            return
+        file = discord.File(io.BytesIO(output.encode()), filename=f"{service}-journal.log")
+        await interaction.followup.send(file=file)
+
+    @app_commands.command()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.choices(service=service_choices(with_log_file=True))
     async def logs(self, interaction: discord.Interaction[LalaBot], service: str) -> None:
-        """Get the log file that a bot writes itself.
+        """🪵 Get the log file that a bot writes itself.
 
         Parameters
         ----------
         service
             Bot to get the log file of.
         """
-        path = const.SERVICES[service]
+        path = const.SERVICES[service].log_file
         if path is None or not path.is_file():
             await interaction.response.send_message(f"❌ No log file at `{path}`.")
             return
