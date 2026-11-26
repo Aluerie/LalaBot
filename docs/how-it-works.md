@@ -5,7 +5,7 @@ This explains the whole setup behind my four bots on the VPS: what keeps them ru
 The bots:
 
 | Bot | Emoji | What it is | Repo folder on the VPS | systemd unit |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | **AluBot** | 🦢 | Discord bot (discord.py) | `~/AluBot` | `alubot.service` |
 | **Dota2Bot** | ⚔️ | Steam / Dota 2 bot (steam.py) | `~/Dota2Bot` | `dota2bot.service` |
 | **IreBot** (IrenesBot) | 💜 | Twitch bot (twitchio) | `~/IrenesBot` | `irebot.service` |
@@ -57,7 +57,7 @@ There are four layers, each catching what the others can't:
 ### ⚡ Quick map: what breaks → what tells me
 
 | What goes wrong | Who notices | What I get | Fixes itself? |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | A bot crashes (exception kills the process) | systemd → `notify_failure.sh` | 💥 in #💖healthcheck within seconds, with the traceback and buttons | ✅ systemd restarts it in 10–30 s |
 | A bot crash-loops | same, throttled | one 💥 per 30 min, counting the crashes in between | 🔁 keeps retrying |
 | A crashed bot runs steadily again | `check_recoveries.sh` | ✅ "back up" 5–10 min later | — |
@@ -86,7 +86,7 @@ You can skip this section if you know systemd well.
 The important lines in our bots' unit files (e.g. [lalabot.service](../lalabot.service)):
 
 | Line | Meaning |
-|---|---|
+| --- | --- |
 | `ExecStart=/home/ubuntu/AluBot/.venv/bin/python src/main.py` | the command to run. It's the venv's Python directly, not `uv run`, so the bot itself is the "main process" and systemd's signals, exit codes and notify messages concern the bot, not a wrapper. |
 | `User=ubuntu` | run as the normal user, not root |
 | `Restart=always` | whenever the process ends (crash or not), start it again… |
@@ -126,7 +126,7 @@ How a program sends it: systemd gives the service an environment variable `NOTIF
 When each bot sends `READY=1`:
 
 | Bot | When | Where |
-|---|---|---|
+| --- | --- | --- |
 | AluBot | in `on_ready`, once logged in to Discord | `AluBot/src/core/bot.py` |
 | Dota2Bot | after Steam login **and** the Dota 2 Game Coordinator is ready (~30 s+ after Steam) | `Dota2Bot/src/core/bot.py` |
 | IreBot | in `event_ready`, once logged in to Twitch | `IreBot/src/core/bot.py` |
@@ -145,7 +145,7 @@ Where each bot starts it: AluBot in `main.py` (a task, cancelled in `finally`), 
 `ExecStopPost=` runs after **every** stop: crashes, but also normal stops, restarts and deploys. systemd passes the script environment variables describing why:
 
 | Variable | Examples | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | `SERVICE_RESULT` | `success`, `exit-code`, `signal`, `watchdog`, `timeout`, `core-dump` | how it ended. `success` = a clean stop (deploy, `/restart`, reboot). |
 | `EXIT_CODE` | `exited`, `killed`, `dumped` | whether it exited by itself or was killed |
 | `EXIT_STATUS` | `1`, `KILL`, `ABRT`, `TERM` | the exit code or signal |
@@ -163,7 +163,7 @@ healthchecks.io gives each "check" a secret URL. Requesting that URL is a **ping
 My checks:
 
 | Check | Pinged by | Period / grace | Notifies via |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | AluBot, Dota2Bot, IreBot, LalaBot (one each) | each bot, every 5 min while healthy | 5 min / 9 min | Discord integration → #💖healthcheck |
 | Database backup | LalaBot, after each daily backup (`/fail` when it fails) | 1 day / 2 h | Discord integration |
 | VPS monitoring | `ping_monitoring.sh`, every 5 min | 5 min / 9 min | **email / the healthchecks.io app**, since the Discord webhook may be what's broken |
@@ -182,44 +182,68 @@ The webhook in use was created **by LalaBot** with `/alertwebhook`. That matters
 
 ### In #💖healthcheck, from the scripts (webhook "VPS alerts")
 
-**💥 `<@me> 💥 `irebot.service` stopped: result=`exit-code` (exited 1)`**
+#### 💥 A bot crashed
+
+> @me 💥 `irebot.service` stopped: result=`exit-code` (exited 1)
+
 - *From:* [scripts/notify_failure.sh](../scripts/notify_failure.sh), run by systemd's `ExecStopPost` when a bot stops for any reason other than a clean stop.
 - *Contains:* the result (see the `SERVICE_RESULT` table above), the bot's last log lines in a code block (usually the traceback), and the buttons **🔄 Restart**, **📓 Tail**, **📁 Journal**.
 - *Throttled:* at most one per bot per 30 min. During a crash loop, the next one adds "plus N more failure(s) since the previous alert".
 - *Means:* the bot died. systemd restarts it on its own after `RestartSec` (10 or 30 s). Read the traceback; if it's a crash loop, fix the bug.
 - `result=watchdog`: it froze and was killed. `result=timeout`: it didn't get ready within `TimeoutStartSec`. `result=signal (killed KILL)`: something killed it, e.g. out of memory or someone's `systemctl kill`.
 
-**✅ `` `irebot.service` is back up, running for 6 min[, after 3 more failure(s) since the last alert]``**
+#### ✅ A crashed bot is back up
+
+> ✅ `irebot.service` is back up, running for 6 min, after 3 more failure(s) since the last alert
+
 - *From:* [scripts/check_recoveries.sh](../scripts/check_recoveries.sh), every 5 min.
 - *Means:* a bot that crashed has now run for at least 5 minutes in a row. The "more failures" part reports the crashes the throttle hid, so I always learn the total.
 
-**⚠️ `<@me> ⚠️ The VPS is low on disk space: 91% of / is used, 4.1G free`** (or `memory`)
+#### 💽 Low disk space or memory
+
+> @me ⚠️ The VPS is low on disk space: 91% of / is used, 4.1G free
+
 - *From:* [scripts/check_resources.sh](../scripts/check_resources.sh), every 5 min.
 - *When:* `/` is ≥ 90% full, or ≤ 10% of RAM is available. Reminds every 6 h while it lasts.
 - *Then:* **✅ The VPS has enough disk space again: …** once it's fine.
 
-**⚠️ `<@me> ⚠️ 12 security update(s) on the VPS aren't installed: is unattended-upgrades broken? (for 8 days)`**
+#### 🔐 Security updates stuck
+
+> @me ⚠️ 12 security update(s) on the VPS aren't installed: is unattended-upgrades broken? (for 8 days)
+
 - *From:* [scripts/check_updates.sh](../scripts/check_updates.sh).
 - *Why it exists:* automatic updates once failed silently for about 3 years, while their job kept reporting success.
 - *When:* security updates have been pending for 7 days. Reminds daily. *Then:* ✅ "The VPS's security updates are installed."
 
-**⚠️ `<@me> ⚠️ The VPS needs a reboot to finish installing updates: `sudo reboot` (for 7 days)`**
+#### 🔁 Reboot needed
+
+> @me ⚠️ The VPS needs a reboot to finish installing updates: `sudo reboot` (for 7 days)
+
 - *From:* the same script. Ubuntu creates `/var/run/reboot-required` when an update (usually a new kernel) needs a reboot; the alert fires once that file is a week old.
 - *Fix:* `/reboot` in Discord. *Then:* ✅ "The VPS is rebooted, the updates are in use."
 
 ### In #💖healthcheck, from healthchecks.io
 
-**"AluBot is DOWN" / "AluBot is UP"** (and the same for each bot)
+#### 💓 A bot's healthcheck is down
+
+> "AluBot is DOWN", later "AluBot is UP" (one check per bot)
+
 - The bot stopped pinging for 9+ minutes. It's either not running, or running but unhealthy: each bot only pings when its connections work (see "What each bot's healthcheck checks" below).
 - If there's no 💥 alert next to it, the process is still running and something is disconnected. `/tail <bot>` shows what.
 - **All of them down at once** = the VPS itself is down or offline.
 
-**"Database backup is DOWN"**
+#### 💾 The backup healthcheck is down
+
+> "Database backup is DOWN"
+
 - Either the daily backup failed (LalaBot pinged `/fail`), or no backup happened for 26 hours (LalaBot was down at 18:05 UTC).
 
 ### By email / the healthchecks.io app
 
-**"VPS monitoring is DOWN"**
+#### 🩺 The monitoring healthcheck is down
+
+> "VPS monitoring is DOWN"
+
 - `ping_monitoring.sh` stopped pinging, or pinged `/fail`. Possible causes:
   - the timer stopped
   - an earlier check script failed (a failing step skips the rest, including the ping)
@@ -325,7 +349,7 @@ The stop during a deploy is clean (`SERVICE_RESULT=success`), so it doesn't aler
 ## 🖥️ Where things are on the VPS
 
 | Path | What |
-|---|---|
+| --- | --- |
 | `~/AluBot`, `~/Dota2Bot`, `~/IrenesBot`, `~/LalaBot` | the git checkouts the bots run from, each with its own `.venv` |
 | `/etc/systemd/system/<bot>.service` | symlinks to the unit files in those repos |
 | `/etc/systemd/system/vps-resources.{service,timer}` | symlinks to the files in `~/LalaBot` |
@@ -356,6 +380,7 @@ The `ubuntu` user can read the whole journal without `sudo` (it's in the `adm` g
 **[ext/presence.py](../ext/presence.py)**: every minute, asks systemd for each bot's state (`systemctl show`) and sets LalaBot's Discord status: 🟢 all up, 🟡 something (re)starting, 🔴 something down. Only sends changes (presence updates are rate-limited).
 
 **[ext/services.py](../ext/services.py)**: most commands. All owner-only.
+
 - `/restart`, `/start`, `/stop`: run `sudo systemctl …`. Reply right away with ⏳, then edit the reply with the result. `/restart lalabot` just says bye, since it kills itself.
 - `/status`: each bot's state, since when, how many auto-restarts.
 - `/tail`, `/journal`: the journal as a code block, or as a file.
@@ -389,6 +414,7 @@ The `ubuntu` user can read the whole journal without `sudo` (it's in the `adm` g
 **[vps-resources.timer](../vps-resources.timer)**: starts the service below 5 min after boot, then every 5 min.
 
 **[vps-resources.service](../vps-resources.service)**: a `oneshot` running, in order:
+
 1. `check_resources.sh`
 2. `check_recoveries.sh`
 3. `check_updates.sh`
@@ -401,6 +427,7 @@ A failing step skips the later ones, so a broken check stops the monitoring ping
 All are plain POSIX `sh` (run with `/bin/sh`, which is `dash` on Ubuntu), run as `ubuntu`, and post to the webhook in `~/.config/failure-webhook-url`. They keep small state files in `~/.cache/` so they only post when something *changes*, plus timed reminders.
 
 **[scripts/notify_failure.sh](../scripts/notify_failure.sh)**: the 💥 crash alert. Run by every bot's `ExecStopPost`. All four units point at this one copy in LalaBot.
+
 1. Exits for `SERVICE_RESULT=success` (clean stops) or when there's no webhook file.
 2. Throttles: one alert per unit per 30 min (`THROTTLE_SECONDS=1800`). Throttled crashes only increment the counter in `~/.cache/notify-failure/<unit>`.
 3. Collects the last 60 journal lines (after a 2 s pause).
@@ -416,6 +443,7 @@ All are plain POSIX `sh` (run with `/bin/sh`, which is `dash` on Ubuntu), run as
 **[scripts/ping_monitoring.sh](../scripts/ping_monitoring.sh)**: the last step. Checks the webhook still exists: a `GET` on a webhook URL only describes it, and 401/404 mean deleted or a changed token. If it's gone or the URL file is missing, pings `/fail` with the reason; otherwise pings the "VPS monitoring" check.
 
 **[scripts/check_monitoring.sh](../scripts/check_monitoring.sh)**: **not** automatic. I run it with `make monitoring` to see a ✔/✘ checklist:
+
 - for every bot: unit linked from its repo, `Type=notify`, watchdog on, LalaBot's crash script in `ExecStopPost`, `HEALTHCHECK_URL` set
 - the timer is linked, running, and its last run succeeded
 - the monitoring and backup healthcheck URLs are set
@@ -444,7 +472,7 @@ Each of AluBot, Dota2Bot and IreBot has the same three pieces:
 ### What each bot's healthcheck checks
 
 | Bot | Pings only if… | Where |
-|---|---|---|
+| --- | --- | --- |
 | AluBot | Discord gateway connected (`ws.open`) and the database answers `SELECT 1` | `src/ext/dev/dev.py`, `healthcheck` |
 | Dota2Bot | Steam socket open, the Game Coordinator ready, and the database answers. Waits for the Game Coordinator before the first check. | `src/ext/health.py` |
 | IreBot | every Twitch EventSub conduit websocket connected, and the database answers | `src/ext/dev/reload.py`, `heartbeat_task` |
@@ -465,10 +493,10 @@ LalaBot doesn't use `shared`: it's a plain discord.py bot with `logging`, so it 
 
 ## 🧰 Cheat sheet
 
-**From Discord (LalaBot):**
+### 💬 From Discord (LalaBot)
 
 | I want to… | Use |
-|---|---|
+| --- | --- |
 | see if everything is up | LalaBot's status light, `/status` |
 | see why a bot crashed | the 💥 alert's log lines, **📓 Tail**, `/tail <bot>` |
 | find something in the logs | `/grep <bot> <pattern> [since]` |
@@ -481,7 +509,7 @@ LalaBot doesn't use `shared`: it's a plain discord.py bot with `logging`, so it 
 | back up now | `/backup` |
 | reboot the server | `/reboot` |
 
-**From a terminal:**
+### 💻 From a terminal
 
 ```sh
 make monitoring
