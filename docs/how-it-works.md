@@ -121,7 +121,7 @@ This matters for three things:
 2. "Started alubot." in the journal means it really got ready, which is what the weekly report counts as "up".
 3. A bot that never gets ready within `TimeoutStartSec` is killed and counts as a failure.
 
-How a program sends it: systemd gives the service an environment variable `NOTIFY_SOCKET` (a Unix socket path). The program sends the text `READY=1` as a datagram to that socket. That's all `sd_notify()` does in [ext/utils/systemd.py](../ext/utils/systemd.py) and in `shared/systemd.py`.
+How a program sends it: systemd gives the service an environment variable `NOTIFY_SOCKET` (a Unix socket path). The program sends the text `READY=1` as a datagram to that socket. That's all `sd_notify()` does in [ext/utils/systemd.py](../ext/utils/systemd.py) and in `shared/systemd.py`. Without `NOTIFY_SOCKET` (a bot started by hand, e.g. at home on Windows) it does nothing, and so does `watchdog_loop()` without `WATCHDOG_USEC`, so running a bot locally needs no special setup.
 
 When each bot sends `READY=1`:
 
@@ -152,6 +152,8 @@ Where each bot starts it: AluBot in `main.py` (a task, cancelled in `finally`), 
 
 [scripts/notify_failure.sh](../scripts/notify_failure.sh) stops immediately for `SERVICE_RESULT=success`, so normal restarts never alert.
 
+The flip side: a bot that gives up by *exiting normally* (code 0) also counts as `success` and wouldn't alert, even though it's a failure. That's why AluBot, Dota2Bot and IreBot exit with code 1 when they can't connect to the database at startup, instead of logging the error and returning.
+
 ### ⏲️ Timers
 
 A **timer** is systemd's cron: a `.timer` unit starts a matching `.service` unit on a schedule. [vps-resources.timer](../vps-resources.timer) starts [vps-resources.service](../vps-resources.service) 5 minutes after boot and then every 5 minutes. That service is `Type=oneshot`: it runs its commands once and finishes. It has several `ExecStart=` lines, which run **in order**, and if one fails, the rest are skipped (that's used on purpose, see `ping_monitoring.sh`).
@@ -172,7 +174,7 @@ So a dead bot is reported 9–14 minutes after its last good ping.
 
 ### 🪝 Discord webhooks
 
-A **webhook** is a URL that posts a message into one channel when you send it JSON, no bot needed. That's why the shell scripts can post alerts: they just `curl` it. The URL lives on the VPS in `~/.config/failure-webhook-url` (one line, never in git).
+A **webhook** is a URL that posts a message into one channel when you send it JSON, no bot needed. That's why the shell scripts can post alerts: they just `curl` it. The URL lives on the VPS in `~/.config/failure-webhook-url` (one line, never in git, readable only by `ubuntu`: anyone with the URL can post into the channel).
 
 The webhook in use was created **by LalaBot** with `/alertwebhook`. That matters for buttons: Discord only lets a webhook carry clickable buttons if an application owns it, and it then sends the clicks to that application. So the 💥 alerts can have 🔄 Restart / 📓 Tail / 📁 Journal buttons that LalaBot handles, even though a shell script posted them.
 
@@ -258,6 +260,11 @@ The webhook in use was created **by LalaBot** with `/alertwebhook`. That matters
 - **Weekly report forum post**: every Monday 09:00 UTC, each bot's uptime %, downtime, crashes, auto-restarts and starts over 7 days, plus VPS reboots.
 - **After `/reboot`**: "✅ The VPS is back up, the reboot took N s." in the channel where I ran it.
 - **Each bot's error webhook**: exceptions that *don't* kill the bot (a failed command, a broken task) go to that bot's error channel, through `shared`'s `ErrorNotificationManager`. That's separate from this setup but covers the "running, but something inside failed" case.
+- **Log mirrors**: AluBot and IreBot also copy their log lines into a logs channel through their `WEBHOOK_LOGGER`. Handy for reading along, but it's not an alert: it goes quiet when the bot dies.
+
+### In Twitch chat
+
+- **"I reloaded myself - commit: …"**: IreBot says this in my chat every time it gets ready. After a deploy it confirms the new commit is running; seeing it repeatedly *without* a deploy means IreBot keeps restarting.
 
 ### Outside Discord
 
@@ -277,7 +284,7 @@ Say IreBot raises an unhandled exception at 12:00:00.
 4. It waits 2 s (journald may still be writing the last lines), then takes the last 60 journal lines.
 5. Python (the system `python3`) builds the message JSON: the text, the newest log lines that fit into Discord's 2000 characters, and the three buttons.
 6. `curl` posts it to the webhook. It tries with buttons first (`?with_components=true`), and if the webhook refuses buttons, without them.
-7. It records "alert sent at 12:00:02, 0 suppressed" in the throttle file.
+7. It records "alert sent at 12:00:02, 0 suppressed" in the throttle file. Only after a successful post: if Discord couldn't be reached, nothing is recorded, so the next crash tries again instead of being throttled.
 8. **12:00:10** (`RestartSec=10`) systemd starts IreBot again. LalaBot's status turns 🟡, then 🟢 once IreBot sends `READY=1`.
 9. **12:05–12:10** `check_recoveries.sh` sees: the throttle file changed after the last recovery message, the service is active, and it's been active since after the crash for ≥ 5 minutes. It posts "✅ back up".
 10. healthchecks.io probably never notices: IreBot was only down for a few seconds, well within the 9-minute grace.
@@ -319,7 +326,7 @@ Nothing on the VPS can send anything, so the webhook alerts can't come. But ever
 
 Pushing to `main` in any bot's repo runs its GitHub Actions workflow (`.github/workflows/deploy_service.yml`):
 
-1. **`check` job**, on GitHub's machine: install the exact locked dependencies, then run the linter (Ruff), the format check, the type checker (ty), the tests (pytest, in every repo except AluBot), and an import of the bot's code. A broken commit stops here and never reaches the VPS.
+1. **`check` job**, on GitHub's machine: install the exact locked dependencies, then run the linter (Ruff), the format check and the type checker (ty) everywhere, the tests (pytest) in every repo except AluBot, and an import of every extension in AluBot and LalaBot. A broken commit stops here and never reaches the VPS.
 2. **`deploy` job**, only if `check` passed: SSH into the VPS and run, with `set -e` (stop at the first failure):
    - `git pull --ff-only` (and the `shared` submodule update)
    - `uv sync --no-dev` (install dependencies into `.venv`)
@@ -379,9 +386,9 @@ The `ubuntu` user can read the whole journal without `sudo` (it's in the `adm` g
 
 **[ext/presence.py](../ext/presence.py)**: every minute, asks systemd for each bot's state (`systemctl show`) and sets LalaBot's Discord status: 🟢 all up, 🟡 something (re)starting, 🔴 something down. Only sends changes (presence updates are rate-limited).
 
-**[ext/services.py](../ext/services.py)**: most commands. All owner-only.
+**[ext/services.py](../ext/services.py)**: most commands. All owner-only, and hidden from members without Manage Server, so others don't even see them.
 
-- `/restart`, `/start`, `/stop`: run `sudo systemctl …`. Reply right away with ⏳, then edit the reply with the result. `/restart lalabot` just says bye, since it kills itself.
+- `/restart`, `/start`, `/stop`: run `sudo systemctl …`. Reply right away with ⏳, then edit the reply with the result. `/restart lalabot` just says bye, since it kills itself. `/start` and `/stop` don't offer LalaBot at all: a stopped LalaBot couldn't be started again from Discord.
 - `/status`: each bot's state, since when, how many auto-restarts.
 - `/tail`, `/journal`: the journal as a code block, or as a file.
 - `/grep <bot> <pattern> [since]`: search a bot's journal (`journalctl --grep`). Shows the newest matches, and attaches all of them as a file when they don't fit.
@@ -429,7 +436,7 @@ All are plain POSIX `sh` (run with `/bin/sh`, which is `dash` on Ubuntu), run as
 **[scripts/notify_failure.sh](../scripts/notify_failure.sh)**: the 💥 crash alert. Run by every bot's `ExecStopPost`. All four units point at this one copy in LalaBot.
 
 1. Exits for `SERVICE_RESULT=success` (clean stops) or when there's no webhook file.
-2. Throttles: one alert per unit per 30 min (`THROTTLE_SECONDS=1800`). Throttled crashes only increment the counter in `~/.cache/notify-failure/<unit>`.
+2. Throttles: one alert per unit per 30 min (`THROTTLE_SECONDS=1800`). Throttled crashes only increment the counter in `~/.cache/notify-failure/<unit>`. The "alert sent" time is only written after a successful post, so a failed post doesn't start the 30 minutes.
 3. Collects the last 60 journal lines (after a 2 s pause).
 4. Uses `python3` to build the JSON: log lines are full of quotes, backslashes and backticks that are painful to escape in `sh`. It also trims the logs to Discord's limit, which counts emoji as two characters.
 5. Posts with buttons, falling back to no buttons.
@@ -541,6 +548,14 @@ ssh vps sudo systemctl kill -s KILL dota2bot
 
 ## 🤔 Why it's built this way
 
+**What it replaced.** Until November 2026, LalaBot itself watched the other bots: every 15 minutes it checked AluBot's Discord status and IreBot's heartbeat messages, and posted into a channel. On 2026-11-25, IreBot crash-looped for about 4 hours (a missing database table, about 1,480 restarts) and I heard nothing:
+
+- LalaBot had lost access to its alert channel on 2026-10-19, so every alert since then had failed with `403 Missing Access`, visible only in its own log.
+- Its `systemctl is-active` check said IreBot was fine, because a service that keeps restarting looks active.
+- The deploy reported success, because `Type=simple` counts a service as started as soon as its process exists.
+
+Everything below follows from that.
+
 - **Outside the bots, layered.** A bot can't report its own crash or freeze, so systemd handles the process, scripts handle the messages, and healthchecks.io handles "nothing at all arrives". Each layer covers the blind spot of the previous one.
 - **Shell scripts for alerts, not LalaBot.** If LalaBot is down, or Discord's gateway is down for it, the alerts still go out: a script with `curl` needs nothing but the network. LalaBot only adds convenience on top (buttons, commands). If LalaBot is down, the buttons do nothing, but the alerts still arrive, and LalaBot's own healthcheck reports it.
 - **Pings only when healthy.** A process that's running but disconnected is the hardest failure to notice. Making the ping conditional turns it into a normal "pings stopped" alert.
@@ -551,6 +566,7 @@ ssh vps sudo systemctl kill -s KILL dota2bot
 ## 🕳️ What's not covered
 
 - **ngrok**: IreBot's public URL runs through an ngrok tunnel that nothing watches. If it drops, IreBot's web pages break while its healthcheck stays green. It's in IreBot's TODO.md.
+- **Twitch problems behind connected sockets**: IreBot's healthcheck only sees that its conduit websockets are connected. An expired token or a broken EventSub subscription can leave them connected while no events arrive, and nothing notices until a command or alert doesn't work.
 - **healthchecks.io or Discord being down**: then I don't get the alerts that go through them.
 - **Backups only live in Discord.** There's no second copy elsewhere.
 - **Docker.** All of this is systemd-specific. When the bots move to Docker, the watchdog becomes a container `HEALTHCHECK` plus a restart policy, `ExecStopPost` becomes something watching Docker's events, and the journal stays if containers use the `journald` log driver.
