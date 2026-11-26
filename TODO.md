@@ -23,7 +23,8 @@ The old clusters are kept stopped as a fallback for a week; once the bots and th
    sudo apt remove postgresql postgresql-15 postgresql-16 postgresql-client-15 postgresql-client-16 && sudo apt autoremove
    ```
 
-4. At home, update the local PostgreSQL 17 to 19 before the next backup restore test: a 19 dump may not load into 17.
+4. At home, uninstall the native PostgreSQL 17 (Windows service `postgresql-x64-17`): since 2026-11-27 the bots use
+   the `dev-db` container (PostgreSQL 19, port 5433, `make db`). Check first that nothing else needs it.
 
 ## 🔁 Reboot the VPS by itself when updates need it (maybe)
 

@@ -30,6 +30,20 @@ help:  # Show this help
 	$(HELP_SCRIPT)
 
 
+##@ Home database
+
+.PHONY: db
+.SILENT: db
+db:  # Start the home PostgreSQL (dev-db/compose.yml)
+	docker compose -f dev-db/compose.yml up -d --wait
+
+
+.PHONY: db-down
+.SILENT: db-down
+db-down:  # Stop the home PostgreSQL (the data stays)
+	docker compose -f dev-db/compose.yml down
+
+
 ##@ VPS
 
 .PHONY: scp

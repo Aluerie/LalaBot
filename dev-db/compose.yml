@@ -1,0 +1,31 @@
+# The home PostgreSQL that the bots use while developing: the same major version as on the VPS, holding a copy of prod.
+# The password is in the git-ignored `.env` next to this file (`POSTGRES_PASSWORD=...`), and in each bot's DATABASE_URL:
+#   DATABASE_URL=postgresql://postgres:<password>@localhost:5433/alubot
+#
+# docker compose -f dev-db/compose.yml up -d --wait    start it (it also starts with Docker Desktop, see `restart`)
+# docker compose -f dev-db/compose.yml down            stop it; the data stays in the `dev-db-data` volume
+#
+# Port 5433, since 5432 is the old native PostgreSQL 17 service while it's still installed.
+# Bound to 127.0.0.1 only: the copy of prod holds real tokens.
+
+name: dev-db
+
+services:
+  postgres:
+    image: postgres:19
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?put POSTGRES_PASSWORD into dev-db/.env}
+      POSTGRES_DB: alubot
+    ports:
+      - 127.0.0.1:5433:5432
+    volumes:
+      - dev-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d alubot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  dev-db-data:

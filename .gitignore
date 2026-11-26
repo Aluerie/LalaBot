@@ -5,3 +5,6 @@ venv/
 
 *.pyc
 
+
+# the home database password (dev-db/compose.yml)
+dev-db/.env
