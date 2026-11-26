@@ -341,8 +341,9 @@ The stop during a deploy is clean (`SERVICE_RESULT=success`), so it doesn't aler
 1. **18:05 UTC**: LalaBot's `daily_backup` loop runs `pg_dump -f <temp file> alubot`.
 2. `check_dump()` refuses dumps under 100 KB or without the line `-- PostgreSQL database dump complete` at the end. `pg_dump` has once "succeeded" with a 0-byte file.
 3. The `.sql` file is posted to the backups post in the bot-stuff forum.
-4. LalaBot pings the backup healthcheck. On any failure: it pings `<url>/fail` and posts "❌ Daily database backup failed" with a ping.
-5. `/backup` does the same on demand (without the healthcheck ping when run at home).
+4. A gzipped copy, `alubot-YYYY-MM-DD.sql.gz`, goes off-site: `rclone copyto` uploads it to `BACKUP_REMOTE` (a Backblaze B2 bucket), then `rclone delete --min-age 30d` removes the copies older than 30 days. Discord keeps every backup, the bucket the last month. rclone's credentials are in `~/.config/rclone/rclone.conf` on the VPS, not in any repo. Steps 3 and 4 don't depend on each other: if one fails, the other still runs, but the backup counts as failed.
+5. LalaBot pings the backup healthcheck. On any failure: it pings `<url>/fail` and posts "❌ Daily database backup failed" with a ping.
+6. `/backup` does the same on demand (without the off-site upload and the healthcheck ping when run at home).
 
 ### 🔁 `/reboot`
 
@@ -398,7 +399,7 @@ The `ubuntu` user can read the whole journal without `sudo` (it's in the `adm` g
 - `/alertwebhook`: creates LalaBot's webhook in the current channel and saves its URL to `~/.config/failure-webhook-url` (the old one is kept as `.old`).
 - `AlertButton`: handles the buttons under 💥 alerts. It's a discord.py `DynamicItem`: instead of belonging to a message LalaBot sent, it matches any button whose ID looks like `alert:<restart|tail|journal>:<bot>`, so buttons on old alerts keep working after restarts.
 
-**[ext/backup.py](../ext/backup.py)**: the daily backup and `/backup` (see the walkthrough), and `/db`: database size, PostgreSQL version and uptime, connections out of `max_connections` (⚠️ at 80%) with a per-bot breakdown, the 5 biggest tables, and a link to the last backup. Runs `psql` and `pg_dump` as `ubuntu`.
+**[ext/backup.py](../ext/backup.py)**: the daily backup and `/backup` (see the walkthrough), and `/db`: database size, PostgreSQL version and uptime, connections out of `max_connections` (⚠️ at 80%) with a per-bot breakdown, the 5 biggest tables, a link to the last backup, and the newest off-site copy. Runs `psql`, `pg_dump` and `rclone` as `ubuntu`.
 
 **[ext/jobs.py](../ext/jobs.py)**: `/jobs [upcoming]`: the bots' scheduled jobs from `shared.scheduler` (how it works: `docs/scheduler.md` in the shared repo). It finds every schema with a `scheduled_jobs` table, so a new bot that uses the scheduler shows up by itself. Per bot: jobs per kind and the next few (AluBot's users as mentions, which don't ping). Then the problems: ⏳ overdue by 5+ min and unclaimed (the bot is down or the handler isn't loaded), 🧊 claimed for 10+ min (a hanging handler), 🔁 retrying after a failure, ❌ an occurrence given up on (its last error line). It's a Components V2 layout (orange when something's wrong), and problems get a button (`JobButton`, a `DynamicItem`, so it works after restarts): ▶️ Retry now (sets `retry_at = now()`, the bot picks it up on its next poll), 🧹 Clear (forgets the error of a given-up occurrence), 🗑️ Delete (asks first). The buttons only change jobs no bot has claimed (`claimed_at is null`): a bot keeps its claimed jobs in memory, and changing those under it could make it run them twice. So 🧊 stuck jobs get no button.
 
@@ -416,7 +417,7 @@ The `ubuntu` user can read the whole journal without `sudo` (it's in the `adm` g
 
 **[ext/utils/forum.py](../ext/utils/forum.py)**: `get_thread()`: fetch a forum post by ID (archived posts aren't cached, so it fetches).
 
-**[config.example.py](../config.example.py)**: what `config.py` needs: `TOKEN`, `HEALTHCHECK_URL`, `BACKUP_HEALTHCHECK_URL`.
+**[config.example.py](../config.example.py)**: what `config.py` needs: `TOKEN`, `HEALTHCHECK_URL`, `BACKUP_HEALTHCHECK_URL`, `BACKUP_REMOTE`.
 
 ### 🧾 The systemd units
 
@@ -458,6 +459,7 @@ All are plain POSIX `sh` (run with `/bin/sh`, which is `dash` on Ubuntu), run as
 - for every bot: unit linked from its repo, `Type=notify`, watchdog on, LalaBot's crash script in `ExecStopPost`, `HEALTHCHECK_URL` set
 - the timer is linked, running, and its last run succeeded
 - the monitoring and backup healthcheck URLs are set
+- `BACKUP_REMOTE` is set, rclone is installed and can list the off-site backups
 - the webhook file exists and `curl` is installed
 
 ### 🛠️ Everything else
@@ -573,5 +575,4 @@ Everything below follows from that.
 - **ngrok**: IreBot's public URL runs through an ngrok tunnel that nothing watches. If it drops, IreBot's web pages break while its healthcheck stays green. It's in IreBot's TODO.md.
 - **Twitch problems behind connected sockets**: IreBot's healthcheck only sees that its conduit websockets are connected. An expired token or a broken EventSub subscription can leave them connected while no events arrive, and nothing notices until a command or alert doesn't work.
 - **healthchecks.io or Discord being down**: then I don't get the alerts that go through them.
-- **Backups only live in Discord.** There's no second copy elsewhere.
 - **Docker.** All of this is systemd-specific. When the bots move to Docker, the watchdog becomes a container `HEALTHCHECK` plus a restart policy, `ExecStopPost` becomes something watching Docker's events, and the journal stays if containers use the `journald` log driver.

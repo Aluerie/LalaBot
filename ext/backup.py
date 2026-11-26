@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import gzip
 import logging
+import shutil
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, override
@@ -28,6 +30,10 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 BACKUP_HEALTHCHECK_URL: str | None = getattr(config, "BACKUP_HEALTHCHECK_URL", None)
+# rclone destination of the off-site copies, e.g. "b2:my-bucket/alubot"; the credentials live in rclone's own config.
+BACKUP_REMOTE: str | None = getattr(config, "BACKUP_REMOTE", None)
+# Off-site copies older than this are deleted after each upload; Discord keeps every backup anyway.
+REMOTE_KEEP_DAYS = 30
 
 # A full dump is ~1.2 MB (November 2026); far below that means something went wrong, not that the data shrank.
 MIN_DUMP_BYTES = 100_000
@@ -49,6 +55,40 @@ def check_dump(path: Path) -> None:
         if DUMP_COMPLETE_MARKER not in file.read():
             msg = f"The dump ({size} bytes) doesn't end with {DUMP_COMPLETE_MARKER.decode()!r}, so it's cut off."
             raise RuntimeError(msg)
+
+
+def compress(path: Path, name: str) -> Path:
+    """Gzip the file at ``path`` into ``name`` next to it and return the new file's path."""
+    target = path.with_name(name)
+    with path.open("rb") as source, gzip.open(target, "wb") as destination:
+        shutil.copyfileobj(source, destination)
+    return target
+
+
+async def rclone(*args: str, timeout: float = 120.0) -> str:  # noqa: ASYNC109
+    """Run ``rclone`` with ``args`` and return its output, raising ``RuntimeError`` when it fails."""
+    returncode, output = await shell.run("rclone", *args, timeout=timeout)
+    if returncode != 0:
+        msg = f"rclone {args[0]} exited with code {returncode}: {output.strip()}"
+        raise RuntimeError(msg)
+    return output
+
+
+async def upload_off_site(dump: Path, remote: str) -> None:
+    """Upload a gzipped copy of ``dump`` to ``remote``, named by today's date, and delete the copies that are too old."""
+    archive = await asyncio.to_thread(compress, dump, f"{const.DATABASE_NAME}-{dt.datetime.now(dt.UTC):%Y-%m-%d}.sql.gz")
+    await rclone("copyto", str(archive), f"{remote}/{archive.name}")
+    await rclone("delete", "--min-age", f"{REMOTE_KEEP_DAYS}d", remote)
+
+
+async def newest_off_site(remote: str) -> tuple[str, int, str] | None:
+    """Get the name, size in bytes and modification time of the newest file in ``remote``, if it has any."""
+    output = await rclone("lsf", "--format", "pst", "--separator", "|", remote, timeout=30)
+    files = [line.split("|") for line in output.splitlines() if line.strip()]
+    if not files:
+        return None
+    name, size, modified = max(files, key=lambda file: file[2])
+    return name, int(size), modified
 
 
 DATABASE_QUERY = """
@@ -115,6 +155,8 @@ class Backup(commands.Cog):
             return
         if BACKUP_HEALTHCHECK_URL is None:
             log.warning("BACKUP_HEALTHCHECK_URL is not set in config.py, so nothing notices missing backups.")
+        if BACKUP_REMOTE is None:
+            log.warning("BACKUP_REMOTE is not set in config.py, so the backups only go to Discord.")
         self.daily_backup.start()
 
     @override
@@ -125,7 +167,11 @@ class Backup(commands.Cog):
         return await get_thread(self.bot, const.DATABASE_BACKUP_THREAD_ID)
 
     async def send_backup(self) -> None:
-        """Dump the database with ``pg_dump``, send the dump to the backups post and ping the backup healthcheck."""
+        """Dump the database with ``pg_dump``, store the dump in both places and ping the backup healthcheck.
+
+        The places are the backups post and, on the VPS, the off-site ``BACKUP_REMOTE``. One failing doesn't stop
+        the other, but the backup only counts as done (and pings the healthcheck) when both worked.
+        """
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / f"{const.DATABASE_NAME}.sql"
             returncode, output = await shell.run("pg_dump", "-f", str(path), const.DATABASE_NAME, timeout=300)
@@ -133,8 +179,23 @@ class Backup(commands.Cog):
                 msg = f"pg_dump exited with code {returncode}: {output.strip()}"
                 raise RuntimeError(msg)
             check_dump(path)
-            thread = await self.get_backup_thread()
-            await thread.send(file=discord.File(path))
+
+            errors: list[str] = []
+            try:
+                thread = await self.get_backup_thread()
+                await thread.send(file=discord.File(path))
+            except Exception as error:
+                log.exception("Failed to send the backup to Discord")
+                errors.append(f"Discord: {error}")
+            # Only from the VPS: `config.py` is copied there from home, so a run at home has the remote set too.
+            if BACKUP_REMOTE is not None and is_systemd_service():
+                try:
+                    await upload_off_site(path, BACKUP_REMOTE)
+                except Exception as error:
+                    log.exception("Failed to upload the backup off-site")
+                    errors.append(f"off-site: {error}")
+            if errors:
+                raise RuntimeError("; ".join(errors))
         await ping_backup_healthcheck()
 
     @tasks.loop(time=dt.time(hour=18, minute=5, tzinfo=dt.UTC))
@@ -180,6 +241,21 @@ class Backup(commands.Cog):
                 return f"💾 Last backup: {size:.1f} MB, <t:{int(message.created_at.timestamp())}:R> · {message.jump_url}"
         return f"⚠️ No backup among the last 20 messages of <#{const.DATABASE_BACKUP_THREAD_ID}>"
 
+    async def off_site_line(self) -> str:
+        """Describe the newest off-site backup: its name, size and age."""
+        if BACKUP_REMOTE is None:
+            return "⚠️ No off-site backups: `BACKUP_REMOTE` isn't set in config.py"
+        try:
+            newest = await newest_off_site(BACKUP_REMOTE)
+        except (OSError, TimeoutError, RuntimeError) as error:
+            return f"⚠️ Couldn't list the off-site backups: {error}"[:300]
+        if newest is None:
+            return f"⚠️ No off-site backups in `{BACKUP_REMOTE}` yet"
+        name, size, modified = newest
+        # `lsf` prints times like "2026-11-26 18:05:12", in UTC
+        moment = dt.datetime.strptime(modified[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=dt.UTC)
+        return f"☁️ Off-site: `{name}`, {size / 1024:.0f} KB, <t:{int(moment.timestamp())}:R>"
+
     @app_commands.command()
     @app_commands.default_permissions(manage_guild=True)
     async def db(self, interaction: discord.Interaction[LalaBot]) -> None:
@@ -207,6 +283,7 @@ class Backup(commands.Cog):
             "📦 Biggest tables:",
             *(f"- `{name}` {table_size}, {int(rows):,} rows" for name, table_size, rows in tables),
             await self.last_backup_line(),
+            await self.off_site_line(),
         ]
         await interaction.followup.send("\n".join(lines))
 
