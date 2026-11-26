@@ -81,12 +81,21 @@ from pg_stat_user_tables
 order by pg_total_relation_size(relid) desc
 limit 5
 """
-# The bots' pools don't set `application_name`, so connections can't be told apart per bot; the total is what matters:
-# once it reaches `max_connections`, new ones get refused.
+# The total is what matters: once it reaches `max_connections`, new ones get refused.
+# Per client, by `application_name` (the bots' pools set it to the bot's name), or the user when it's empty.
 CONNECTIONS_QUERY = """
-select count(*), count(*) filter (where state = 'active'), current_setting('max_connections')
-from pg_stat_activity
-where datname = current_database()
+with connections as (
+    select coalesce(nullif(application_name, ''), usename, '?') as client, state
+    from pg_stat_activity
+    where datname = current_database()
+),
+clients as (
+    select client, count(*) as count from connections group by client
+)
+select (select count(*) from connections),
+       (select count(*) from connections where state = 'active'),
+       current_setting('max_connections'),
+       (select string_agg(client || ' ' || count, ', ' order by count desc, client) from clients)
 """
 
 
@@ -207,13 +216,13 @@ class Backup(commands.Cog):
             return
 
         version, size, started = database[0]
-        total, active, maximum = connections[0]
+        total, active, maximum, per_client = connections[0]
         # Warn at 80%: each bot's pool holds its connections open, so the count only grows with new bots or pools.
         connections_mark = "⚠️" if int(total) * 100 >= int(maximum) * 80 else "🔌"
         lines = [
             # `server_version` is like "19.0 (Ubuntu 19.0-2.pgdg22.04+1)"
             f"🐘 **`{const.DATABASE_NAME}`**: {size}, PostgreSQL {version.split()[0]} running since <t:{started}:R>",
-            f"{connections_mark} Connections: {total} of max {maximum}, {active} active",
+            f"{connections_mark} Connections: {total} of max {maximum}, {active} active ({per_client})",
             "📦 Biggest tables:",
             *(f"- `{name}` {table_size}, {int(rows):,} rows" for name, table_size, rows in tables),
             await self.last_backup_line(),
