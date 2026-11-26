@@ -13,6 +13,8 @@ All of them are owner-only.
 * `/status` — whether each service is running, since when, and how many times systemd auto-restarted it.
 * `/tail <service> [lines]` — the latest lines of a service's systemd journal, right in the chat as a code block.
 * `/journal <service> [lines]` — the latest lines of a service's systemd journal, as a file.
+* `/vps` — the VPS's health: uptime, load, memory, disk, pending updates, whether it needs a reboot,
+  failed systemd units, PostgreSQL clusters and whether the monitoring checks below pass.
 * `/backup` — back up the VPS PostgreSQL database right now.
   It also happens on its own every day at 18:05 UTC.
 
@@ -44,6 +46,12 @@ LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bo
 * **Disk space and memory** — `vps-resources.timer` runs [scripts/check_resources.sh](scripts/check_resources.sh)
   every 5 minutes, which posts to the same webhook when `/` is 90%+ full or less than 10% of RAM is available,
   reminds every 6 hours while it lasts, and posts again once it's fine.
+* **Updates** — the same timer runs [scripts/check_updates.sh](scripts/check_updates.sh), which posts when security
+  updates have been pending for a week (so unattended-upgrades is broken) or the VPS has needed a reboot for a week.
+* **The monitoring itself** — the timer's last step, [scripts/ping_monitoring.sh](scripts/ping_monitoring.sh),
+  pings a healthchecks.io check whose URL lives on the VPS in `/home/ubuntu/.config/monitoring-healthcheck-url`.
+  A failed step skips it, and it pings `/fail` when the Discord webhook is gone, so a broken timer, check or webhook
+  gets noticed. This check notifies by email or the healthchecks.io app, since the webhook may be what's broken.
 * **Database backups** — after every successful backup LalaBot pings a daily healthchecks.io check
   (`BACKUP_HEALTHCHECK_URL` in `config.py`), and pings its `/fail` URL when the daily backup fails.
   So healthchecks.io alerts both on a failed backup and on a day without one.

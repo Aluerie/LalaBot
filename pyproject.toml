@@ -48,3 +48,7 @@ dev = [
 
 [tool.ruff.lint.isort]
 split-on-trailing-comma = true
+
+[tool.ty.environment]
+# LalaBot only runs on the VPS, so check against Linux even on a Windows machine (e.g. `os.getloadavg` exists).
+python-platform = "linux"

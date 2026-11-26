@@ -7,6 +7,11 @@ import datetime as dt
 import io
 import json
 import logging
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, override
 
 import discord
@@ -52,6 +57,110 @@ def codeblock(text: str, limit: int = 1800) -> str:
     return f"```\n{text.strip()[-limit:]}\n```"
 
 
+REBOOT_REQUIRED_FILE = Path("/var/run/reboot-required")
+# The timer's service that runs the VPS's own checks (disk, memory, recoveries, updates); see scripts/.
+MONITORING_SERVICE = "vps-resources"
+# Same thresholds as scripts/check_resources.sh, which alerts on them.
+DISK_MAX_USED_PERCENT = 90
+MEMORY_MIN_AVAILABLE_PERCENT = 10
+
+
+def gigabytes(size: float) -> str:
+    """Format a size in bytes as gigabytes with one decimal."""
+    return f"{size / 1024**3:.1f} GB"
+
+
+async def output_of(*args: str) -> str | None:
+    """Run a program and get its output, or ``None`` when it's missing or fails."""
+    try:
+        returncode, output = await shell.run(*args)
+    except OSError, TimeoutError:
+        return None
+    return output if returncode == 0 else None
+
+
+def resource_lines() -> list[str]:
+    """Lines of /vps about uptime, load, memory and disk, read from ``/proc`` and the file system."""
+    boot = round(time.time() - float(Path("/proc/uptime").read_text().split()[0]))
+    load = os.getloadavg()
+    cpus = os.cpu_count() or 1
+    meminfo = {
+        key: int(value.split()[0]) * 1024
+        for key, value in (line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
+    }
+    total, available = meminfo["MemTotal"], meminfo["MemAvailable"]
+    memory_percent = available * 100 // total
+    disk = shutil.disk_usage("/")
+    disk_percent = disk.used * 100 // disk.total
+
+    # ✅ when fine, ⚠️ when it needs a look
+    load_mark = "✅" if load[1] < cpus else "⚠️"
+    memory_mark = "✅" if memory_percent > MEMORY_MIN_AVAILABLE_PERCENT else "⚠️"
+    disk_mark = "✅" if disk_percent < DISK_MAX_USED_PERCENT else "⚠️"
+    memory = f"{gigabytes(available)} of {gigabytes(total)} available ({memory_percent}%)"
+    disk_used = f"{gigabytes(disk.used)} of {gigabytes(disk.total)} used ({disk_percent}%), {gigabytes(disk.free)} free"
+    return [
+        f"⏱️ Up since <t:{boot}:f> (<t:{boot}:R>)",
+        f"{load_mark} Load {load[0]:.2f} / {load[1]:.2f} / {load[2]:.2f} on {cpus} cores",
+        f"{memory_mark} Memory: {memory}",
+        f"{disk_mark} Disk: {disk_used}",
+    ]
+
+
+def reboot_line() -> str:
+    """Line of /vps about whether installed updates wait for a reboot, and since when."""
+    if not REBOOT_REQUIRED_FILE.exists():
+        return "✅ No reboot needed"
+    since = round(REBOOT_REQUIRED_FILE.stat().st_mtime)
+    return f"⚠️ Needs a reboot for installed updates since <t:{since}:R>"
+
+
+async def vps_health_lines() -> list[str]:
+    """Collect the lines of /vps: load, memory, disk, pending updates, failed units, databases and monitoring."""
+    lines = resource_lines()
+
+    upgradable, failed_units, clusters = await asyncio.gather(
+        output_of("apt", "list", "--upgradable"),
+        output_of("systemctl", "--failed", "--plain", "--no-legend"),
+        output_of("pg_lsclusters", "--no-header"),
+    )
+
+    if upgradable is None:
+        lines.append("❔ Updates: `apt list` failed")
+    else:
+        packages = [line for line in upgradable.splitlines() if "/" in line]
+        security = sum("-security" in line for line in packages)
+        # Security updates waiting for tonight's unattended-upgrades run are normal, so they get an info sign only.
+        lines.append(
+            f"{'✅' if not security else '🔹'} Updates: {security} security, {len(packages) - security} other pending"
+        )
+    lines.append(reboot_line())
+
+    if failed_units is None:
+        lines.append("❔ Failed units: `systemctl --failed` failed")
+    else:
+        units = [line.split()[0] for line in failed_units.splitlines() if line.strip()]
+        lines.append(f"❌ Failed units: {', '.join(units)}" if units else "✅ No failed systemd units")
+
+    # `pg_lsclusters` lines: version, cluster, port, status, owner, data directory, log file.
+    for cluster in (clusters or "").splitlines():
+        version, name, port, status, *_ = cluster.split()
+        # Stopped clusters are usually old ones kept around on purpose, so they aren't a problem.
+        emoji = "🐘" if status.startswith("online") else "⚫"
+        lines.append(f"{emoji} PostgreSQL {version} `{name}` on port {port}: {status}")
+
+    try:
+        services = await show_services([MONITORING_SERVICE], ["Result", "ExecMainExitTimestampMonotonic"])
+    except RuntimeError:
+        services = {}
+    props = services.get(MONITORING_SERVICE, {})
+    result = props.get("Result", "?")
+    ran = monotonic_to_unix(props.get("ExecMainExitTimestampMonotonic", ""))
+    when = f", last run <t:{ran}:R>" if ran else ""
+    lines.append(f"{'✅' if result == 'success' else '❌'} Monitoring checks: {result}{when}")
+    return lines
+
+
 def format_journal_entry(line: str) -> str:
     """Turn one line of ``journalctl --output=json`` into a short ``HH:MM:SS message`` line (time in UTC)."""
     entry = json.loads(line)
@@ -63,7 +172,7 @@ def format_journal_entry(line: str) -> str:
 
 
 class Services(commands.Cog):
-    """Owner-only commands to manage the bots' systemd services on the VPS from Discord."""
+    """Owner-only commands to manage the bots' systemd services on the VPS from Discord, and to check the VPS's health."""
 
     def __init__(self, bot: LalaBot) -> None:
         self.bot: LalaBot = bot
@@ -247,6 +356,19 @@ class Services(commands.Cog):
             return
         file = discord.File(io.BytesIO(output.encode()), filename=f"{service}-journal.log")
         await interaction.followup.send(file=file)
+
+    # --- VPS ----------------------------------------------------------------------------------------------------------
+
+    @app_commands.command()
+    @app_commands.default_permissions(manage_guild=True)
+    async def vps(self, interaction: discord.Interaction[LalaBot]) -> None:
+        """🖥️ Show the VPS's health: load, memory, disk, pending updates, failed units, databases and monitoring."""
+        if sys.platform != "linux":
+            await interaction.response.send_message("🏠 Running at home, there's no VPS to check.")
+            return
+        await interaction.response.defer()
+        lines = await vps_health_lines()
+        await interaction.followup.send("\n".join(["🖥️ **VPS health**", *lines]))
 
 
 async def setup(bot: LalaBot) -> None:

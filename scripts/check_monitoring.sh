@@ -29,11 +29,13 @@ for entry in \
     check 'grep -q "$pattern" "$config" 2>/dev/null' "HEALTHCHECK_URL is set in $config"
 done
 
-printf '\n\033[35mvps-resources\033[0m (disk space and memory alerts)\n'
+printf '\n\033[35mvps-resources\033[0m (disk space, memory, recovery and update alerts)\n'
 fragment=$(readlink -f "$(systemctl show -p FragmentPath --value vps-resources.timer)")
 check '[ "$fragment" = /home/ubuntu/LalaBot/vps-resources.timer ]' "timer is linked from the repo ($fragment)"
 check '[ "$(systemctl is-active vps-resources.timer)" = active ]' "timer is running"
 check '[ "$(systemctl show -p Result --value vps-resources.service)" = success ]' "last check succeeded"
+check '[ -s /home/ubuntu/.config/monitoring-healthcheck-url ]' \
+    "its healthchecks.io URL is in /home/ubuntu/.config/monitoring-healthcheck-url"
 
 printf '\n\033[35mdatabase backups\033[0m (by LalaBot)\n'
 backup_url_pattern="^BACKUP_HEALTHCHECK_URL.*=.*[\"']"
@@ -46,3 +48,4 @@ check 'command -v curl >/dev/null' "curl is installed"
 echo
 echo "Not checkable from here: in healthchecks.io, every bot's check needs period 5 min / grace 9 min,"
 echo "the backup check period 1 day / grace 2 hours, and all of them the Discord integration for #💖healthcheck."
+echo "The monitoring check (5 min / 9 min) also needs an email or app notification: it alerts when the webhook is gone."
