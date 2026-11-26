@@ -357,6 +357,38 @@ async def send_journal(interaction: discord.Interaction, service: str, lines: in
     await interaction.followup.send(file=file)
 
 
+def status_line(name: str, props: dict[str, str]) -> str:
+    """Describe a bot's service for /status: its state, since when, and how often systemd auto-restarted it."""
+    state = props.get("ActiveState", "?")
+    line = f"{STATE_EMOJIS.get(state, '❔')} {label(name)} {state} ({props.get('SubState', '?')})"
+    if state == "active" and (since := monotonic_to_unix(props.get("ActiveEnterTimestampMonotonic", ""))):
+        line += f" since <t:{since}:R>"
+    if (restarts := props.get("NRestarts", "0")) != "0":
+        line += f", auto-restarted {restarts} times"
+    return line
+
+
+def status_view(services: dict[str, dict[str, str]], now: int) -> discord.ui.LayoutView:
+    """Build /status: a row per bot with a 🔄 Restart button next to it, green when all are up, red otherwise.
+
+    The buttons are the crash alerts' `AlertButton`s, so they work the same way and keep working after restarts.
+    """
+    all_up = all(props.get("ActiveState") == "active" for props in services.values())
+    container = discord.ui.Container[discord.ui.LayoutView](
+        accent_colour=discord.Colour.green() if all_up else discord.Colour.red()
+    )
+    container.add_item(discord.ui.TextDisplay("## 📊 Bots" + ("" if all_up else " · something is down")))
+    for name, props in services.items():
+        button = AlertButton("restart", name, label="Restart", emoji="🔄")
+        # a `DynamicItem` works as an accessory, it's only typed for both view kinds instead of `LayoutView`
+        container.add_item(discord.ui.Section(status_line(name, props), accessory=button))  # ty: ignore[invalid-argument-type]
+    container.add_item(discord.ui.Separator())
+    container.add_item(discord.ui.TextDisplay(f"-# Checked <t:{now}:R> · /vps for the server, /jobs for scheduled jobs"))
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(container)
+    return view
+
+
 class AlertButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"alert:(?P<action>restart|tail|journal):(?P<service>[a-z0-9_-]+)",
@@ -369,8 +401,11 @@ class AlertButton(
     the clicks to the webhook's application, and doesn't allow such buttons on webhooks of no application.
     """
 
-    def __init__(self, action: str, service: str) -> None:
-        super().__init__(discord.ui.Button(label=action, custom_id=f"alert:{action}:{service}"))
+    def __init__(self, action: str, service: str, *, label: str | None = None, emoji: str | None = None) -> None:
+        button = discord.ui.Button[discord.ui.View](
+            label=label or action, emoji=emoji, custom_id=f"alert:{action}:{service}"
+        )
+        super().__init__(button)
         self.action: str = action
         self.service: str = service
 
@@ -540,16 +575,7 @@ class Services(commands.Cog):
             await interaction.followup.send(f"❌ {codeblock(str(error))}")
             return
 
-        lines: list[str] = []
-        for name, props in services.items():
-            state = props.get("ActiveState", "?")
-            line = f"{STATE_EMOJIS.get(state, '❔')} {label(name)} {state} ({props.get('SubState', '?')})"
-            if state == "active" and (since := monotonic_to_unix(props.get("ActiveEnterTimestampMonotonic", ""))):
-                line += f" since <t:{since}:R>"
-            if (restarts := props.get("NRestarts", "0")) != "0":
-                line += f", auto-restarted {restarts} times"
-            lines.append(line)
-        await interaction.followup.send("\n".join(lines))
+        await interaction.followup.send(view=status_view(services, int(time.time())))
 
     @app_commands.command()
     @app_commands.default_permissions(manage_guild=True)

@@ -13,7 +13,7 @@ import datetime as dt
 import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Any, Literal, Self, override
 
 import discord
 from discord import app_commands
@@ -45,7 +45,11 @@ STUCK_AFTER = dt.timedelta(minutes=10)
 TEXT_WIDTH = 60
 MINUTES_SHOWN_UP_TO = 120
 HOURS_SHOWN_UP_TO = 48
-MESSAGE_LIMIT = 2000
+BLOCK_LIMIT = 1200
+"""Characters per bot's block: a Components V2 message holds 4000 characters of text in all."""
+PROBLEM_LIMIT = 300
+MAX_PROBLEM_ROWS = 8
+"""Problems shown with a button; a message holds 40 components (a problem row takes 3)."""
 
 
 def jobs_query(schemas: Iterable[str]) -> str:
@@ -157,8 +161,28 @@ def ago(seconds: float) -> str:
     return f"{minutes // (24 * 60)} d"
 
 
-def problems(jobs: Iterable[JobRow], now: int) -> list[str]:
-    """Describe the jobs that need a look: stuck, overdue, retrying or given up on.
+@dataclass(frozen=True, slots=True)
+class Problem:
+    """A job that needs a look, and what can be done about it from `/jobs`.
+
+    Attributes
+    ----------
+    job
+        The job.
+    text
+        What's wrong, as one line.
+    action
+        The button next to it: "retry" (run the failing occurrence again now), "clear" (forget the error of an
+        occurrence that was given up on), "delete" (a job nobody runs), or `None` (a bot is holding it right now).
+    """
+
+    job: JobRow
+    text: str
+    action: Literal["retry", "clear", "delete"] | None
+
+
+def problems(jobs: Iterable[JobRow], now: int) -> list[Problem]:
+    """Find the jobs that need a look: stuck, overdue, retrying or given up on.
 
     Parameters
     ----------
@@ -167,22 +191,60 @@ def problems(jobs: Iterable[JobRow], now: int) -> list[str]:
     now
         The current unix time.
     """
-    lines: list[str] = []
+    found: list[Problem] = []
     for job in jobs:
         where = f"**{job.schema}** `#{job.id}` {job.kind}"
         if job.claimed_at is not None and now - job.claimed_at > STUCK_AFTER.total_seconds():
-            lines.append(f"- 🧊 {where}: claimed {ago(now - job.claimed_at)} ago and still not done (a hanging handler?)")
+            text = f"🧊 {where}: claimed {ago(now - job.claimed_at)} ago and still not done (a hanging handler?)"
+            found.append(Problem(job, text, None))
         elif job.claimed_at is None and now - job.fires_at > OVERDUE_AFTER.total_seconds():
-            lines.append(f"- ⏳ {where}: {ago(now - job.fires_at)} overdue (the bot is down, or the handler isn't loaded?)")
+            text = f"⏳ {where}: {ago(now - job.fires_at)} overdue (the bot is down, or the handler isn't loaded?)"
+            found.append(Problem(job, text, "delete"))
         if job.attempts:
-            lines.append(f"- 🔁 {where}: failed {job.attempts}×, retrying <t:{job.fires_at}:R>: `{job.error}`")
+            text = f"🔁 {where}: failed {job.attempts}×, retrying <t:{job.fires_at}:R>: `{job.error}`"
+            found.append(Problem(job, text, "retry" if job.claimed_at is None else None))
         elif job.error:
-            lines.append(f"- ❌ {where}: the last occurrence was given up on: `{job.error}`")
-    return lines
+            text = f"❌ {where}: the last occurrence was given up on: `{job.error}`"
+            found.append(Problem(job, text, "clear" if job.claimed_at is None else None))
+    return found
 
 
-def render(schemas: Sequence[str], jobs: Sequence[JobRow], now: int, *, upcoming: int) -> list[str]:
-    """Build the lines of `/jobs`: per bot, how many jobs of each kind and the next ones; then the problems.
+def fit(text: str, limit: int) -> str:
+    """Cut text to the limit, at a line break when there is one."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 2]
+    return cut[: cut.rfind("\n")] + "\n…" if "\n" in cut else cut + "…"
+
+
+def schema_block(schema: str, jobs: Sequence[JobRow], *, upcoming: int) -> str:
+    """Describe one bot's jobs: how many of each kind, then the next ones."""
+    service = SCHEMA_SERVICES.get(schema, schema)
+    emoji = const.SERVICES[service].emoji if service in const.SERVICES else "🤖"
+    if not jobs:
+        return f"{emoji} **{schema}**: no jobs"
+    kinds = collections.Counter(job.kind for job in jobs)
+    summary = ", ".join(f"{kind} {count}" for kind, count in kinds.most_common())
+    lines = [f"{emoji} **{schema}**: {len(jobs)} jobs ({summary})"]
+    for job in jobs[:upcoming]:
+        repeats = " 🔁" if job.rule else ""
+        lines.append(f"- `#{job.id}` {job.kind}{repeats} <t:{job.fires_at}:R> {job.label}".rstrip())
+    if len(jobs) > upcoming:
+        lines.append(f"-# …and {len(jobs) - upcoming} more")
+    return fit("\n".join(lines), BLOCK_LIMIT)
+
+
+BUTTONS: dict[str, tuple[str, str, discord.ButtonStyle]] = {
+    "retry": ("Retry now", "▶️", discord.ButtonStyle.primary),
+    "clear": ("Clear", "🧹", discord.ButtonStyle.secondary),
+    "delete": ("Delete", "🗑️", discord.ButtonStyle.danger),
+    "confirm": ("Delete for good", "🗑️", discord.ButtonStyle.danger),
+}
+"""Label, emoji and style of each `JobButton` action."""
+
+
+def render(schemas: Sequence[str], jobs: Sequence[JobRow], now: int, *, upcoming: int) -> discord.ui.LayoutView:
+    """Build `/jobs`: per bot, how many jobs of each kind and the next ones; then the problems, each with its button.
 
     Parameters
     ----------
@@ -195,47 +257,120 @@ def render(schemas: Sequence[str], jobs: Sequence[JobRow], now: int, *, upcoming
     upcoming
         How many of the next jobs to list per bot.
     """
-    lines = ["🗓️ **Scheduled jobs**"]
     by_schema: dict[str, list[JobRow]] = collections.defaultdict(list)
     for job in jobs:
         by_schema[job.schema].append(job)
-
-    for schema in schemas:
-        service = SCHEMA_SERVICES.get(schema, schema)
-        emoji = const.SERVICES[service].emoji if service in const.SERVICES else "🤖"
-        mine = by_schema[schema]
-        if not mine:
-            lines.append(f"{emoji} **{schema}**: no jobs")
-            continue
-        kinds = collections.Counter(job.kind for job in mine)
-        summary = ", ".join(f"{kind} {count}" for kind, count in kinds.most_common())
-        lines.append(f"{emoji} **{schema}**: {len(mine)} jobs ({summary})")
-        for job in mine[:upcoming]:
-            repeats = " 🔁" if job.rule else ""
-            lines.append(f"- `#{job.id}` {job.kind}{repeats} <t:{job.fires_at}:R> {job.label}".rstrip())
-        if len(mine) > upcoming:
-            lines.append(f"-# …and {len(mine) - upcoming} more")
-
     trouble = problems(jobs, now)
-    lines.append("⚠️ **Problems**" if trouble else "✅ No problems: nothing stuck, overdue, retrying or given up on.")
-    lines.extend(trouble)
-    return lines
+
+    container = discord.ui.Container[discord.ui.LayoutView](
+        accent_colour=discord.Colour.orange() if trouble else discord.Colour.green()
+    )
+    container.add_item(discord.ui.TextDisplay("## 🗓️ Scheduled jobs"))
+    for schema in schemas:
+        container.add_item(discord.ui.TextDisplay(schema_block(schema, by_schema[schema], upcoming=upcoming)))
+    container.add_item(discord.ui.Separator())
+    if not trouble:
+        container.add_item(discord.ui.TextDisplay("✅ No problems: nothing stuck, overdue, retrying or given up on."))
+    else:
+        container.add_item(discord.ui.TextDisplay(f"### ⚠️ Problems ({len(trouble)})"))
+        for problem in trouble[:MAX_PROBLEM_ROWS]:
+            text = fit(problem.text, PROBLEM_LIMIT)
+            if problem.action is None:
+                container.add_item(discord.ui.TextDisplay(text))
+            else:
+                button = JobButton(problem.action, problem.job.schema, problem.job.id)
+                # a `DynamicItem` works as an accessory, it's only typed for both view kinds instead of `LayoutView`
+                container.add_item(discord.ui.Section(text, accessory=button))  # ty: ignore[invalid-argument-type]
+        if len(trouble) > MAX_PROBLEM_ROWS:
+            container.add_item(discord.ui.TextDisplay(f"-# …and {len(trouble) - MAX_PROBLEM_ROWS} more problems"))
+    container.add_item(discord.ui.TextDisplay(f"-# Checked <t:{now}:R>"))
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(container)
+    return view
 
 
-def chunk(lines: Iterable[str], limit: int = MESSAGE_LIMIT) -> list[str]:
-    """Join lines into as few messages as fit Discord's length limit; a too long line is cut."""
-    messages: list[str] = []
-    current = ""
-    for line in lines:
-        line = line if len(line) <= limit else line[: limit - 1] + "…"  # noqa: PLW2901
-        if current and len(current) + 1 + len(line) > limit:
-            messages.append(current)
-            current = line
+def action_query(action: str, schema: str, job_id: int) -> str:
+    """Build the query of a `JobButton` action. It only touches the job while no bot holds it (``claimed_at``).
+
+    A bot keeps the jobs it claimed in memory until they're done, so changing them under its feet could make it
+    run them twice; unclaimed jobs live only in the table.
+    """
+    if not SCHEMA_NAME.fullmatch(schema):
+        msg = f"Not a plain schema name: {schema!r}"
+        raise ValueError(msg)
+    table = f'"{schema}".scheduled_jobs'
+    where = f"where id = {int(job_id)} and claimed_at is null"
+    # S608: the schema name is checked above and the ID is an `int`, everything else is constant
+    return {
+        # the bot claims it on its next poll, within 30 seconds
+        "retry": f"update {table} set retry_at = now() {where} and attempts > 0 returning id",  # noqa: S608
+        "clear": f"update {table} set last_error = null {where} and attempts = 0 returning id",  # noqa: S608
+        "confirm": f"delete from {table} {where} returning kind",  # noqa: S608
+    }[action]
+
+
+class JobButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"jobs:(?P<action>retry|clear|delete|confirm):(?P<schema>[a-z_][a-z0-9_]*):(?P<job_id>\d+)",
+):
+    """The buttons next to `/jobs` problems: ▶️ Retry now, 🧹 Clear, 🗑️ Delete (and its confirmation).
+
+    The job is in the custom ID, so the buttons keep working after LalaBot restarts.
+    """
+
+    def __init__(self, action: str, schema: str, job_id: int) -> None:
+        label, emoji, style = BUTTONS[action]
+        button = discord.ui.Button[discord.ui.View](
+            label=label, emoji=emoji, style=style, custom_id=f"jobs:{action}:{schema}:{job_id}"
+        )
+        super().__init__(button)
+        self.action: str = action
+        self.schema: str = schema
+        self.job_id: int = job_id
+
+    @classmethod
+    @override
+    async def from_custom_id(
+        cls,
+        interaction: discord.Interaction,
+        item: discord.ui.Item[Any],
+        match: re.Match[str],
+        /,
+    ) -> Self:
+        return cls(match["action"], match["schema"], int(match["job_id"]))
+
+    @override
+    async def interaction_check(self, interaction: discord.Interaction, /) -> bool:
+        if interaction.user.id != const.OWNER_ID:
+            await interaction.response.send_message(f"{const.HU_EMOTE} Not for you.", ephemeral=True)
+            return False
+        return True
+
+    @override
+    async def callback(self, interaction: discord.Interaction) -> None:
+        where = f"**{self.schema}** `#{self.job_id}`"
+        if self.action == "delete":
+            view = discord.ui.View(timeout=None)
+            view.add_item(JobButton("confirm", self.schema, self.job_id))
+            await interaction.response.send_message(
+                f"🗑️ Delete {where} for good? Its bot won't run it anymore.", view=view, ephemeral=True
+            )
+            return
+
+        try:
+            rows = await psql(action_query(self.action, self.schema, self.job_id))
+        except (OSError, TimeoutError, RuntimeError) as error:
+            await interaction.response.send_message(f"❌ Couldn't change the job: {error}"[:2000], ephemeral=True)
+            return
+        if not rows:
+            content = f"🤷 Nothing to do for {where}: it's gone, fixed, or a bot is holding it right now."
         else:
-            current = f"{current}\n{line}" if current else line
-    if current:
-        messages.append(current)
-    return messages
+            content = {
+                "retry": f"▶️ {where} runs again on its bot's next poll, within 30 seconds.",
+                "clear": f"🧹 Cleared the error of {where}.",
+                "confirm": f"🗑️ Deleted {where} ({rows[0][0]}).",
+            }[self.action]
+        await interaction.response.send_message(content, ephemeral=True)
 
 
 class Jobs(commands.Cog):
@@ -244,10 +379,18 @@ class Jobs(commands.Cog):
     def __init__(self, bot: LalaBot) -> None:
         self.bot: LalaBot = bot
 
+    @override
+    async def cog_load(self) -> None:
+        self.bot.add_dynamic_items(JobButton)
+
+    @override
+    async def cog_unload(self) -> None:
+        self.bot.remove_dynamic_items(JobButton)
+
     @app_commands.command()
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(upcoming="How many of the next jobs to list per bot (5 by default).")
-    async def jobs(self, interaction: discord.Interaction[LalaBot], upcoming: app_commands.Range[int, 0, 25] = 5) -> None:
+    async def jobs(self, interaction: discord.Interaction[LalaBot], upcoming: app_commands.Range[int, 0, 10] = 5) -> None:
         """🗓️ Show the bots' scheduled jobs (reminders, birthdays...) and the ones with problems."""
         if interaction.user.id != const.OWNER_ID:
             await interaction.response.send_message(f"{const.HU_EMOTE} Not for you.", ephemeral=True)
@@ -257,16 +400,16 @@ class Jobs(commands.Cog):
             schemas = [row[0] for row in await psql(SCHEMAS_QUERY) if SCHEMA_NAME.fullmatch(row[0])]
             rows = await psql(jobs_query(schemas)) if schemas else []
         except (OSError, TimeoutError, RuntimeError) as error:
-            await interaction.followup.send(f"❌ Couldn't query the database: {error}"[:MESSAGE_LIMIT])
+            await interaction.followup.send(f"❌ Couldn't query the database: {error}"[:2000])
             return
 
         if not schemas:
             await interaction.followup.send("🗓️ No bot has a `scheduled_jobs` table yet.")
             return
         jobs = [JobRow.from_fields(row) for row in rows]
-        for message in chunk(render(schemas, jobs, int(time.time()), upcoming=upcoming)):
-            # the mentions only name the jobs' users, nobody should be pinged
-            await interaction.followup.send(message, allowed_mentions=discord.AllowedMentions.none())
+        view = render(schemas, jobs, int(time.time()), upcoming=upcoming)
+        # the mentions only name the jobs' users, nobody should be pinged
+        await interaction.followup.send(view=view, allowed_mentions=discord.AllowedMentions.none())
 
 
 async def setup(bot: LalaBot) -> None:

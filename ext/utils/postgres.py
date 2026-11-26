@@ -14,6 +14,7 @@ async def psql(query: str) -> list[list[str]]:
     returncode, output = await shell.run(
         "psql",
         "--no-psqlrc",
+        "--quiet",  # no "UPDATE 1"-like status lines among the rows
         "--tuples-only",
         "--no-align",
         "--field-separator=\t",

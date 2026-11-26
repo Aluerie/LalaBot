@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import json
+
 import pytest
 
-from ext.jobs import JobRow, ago, chunk, jobs_query, problems, render
+from ext.jobs import JobRow, action_query, ago, fit, jobs_query, problems, render
 
 NOW = 1_800_000_000
 
@@ -65,41 +68,64 @@ def test_healthy_jobs_have_no_problems() -> None:
 
 
 def test_problems() -> None:
-    lines = problems(
+    found = problems(
         [
             job(id=1, fires_at=NOW - 3600),  # overdue, unclaimed
             job(id=2, fires_at=NOW - 3600, claimed_at=NOW - 3600),  # claimed long ago
             job(id=3, attempts=2, error="RuntimeError: boom"),  # retrying
             job(id=4, rule="FREQ=DAILY", error="KeyError: 'x'"),  # given up on, moved on
+            job(id=5, attempts=1, error="E", claimed_at=NOW - 30),  # retrying, but a bot holds it right now
         ],
         NOW,
     )
-    assert len(lines) == 4
-    overdue, stuck, retrying, given_up = lines
-    assert overdue.startswith("- ⏳ **alubot** `#1`")
-    assert "60 min overdue" in overdue
-    assert stuck.startswith("- 🧊 **alubot** `#2`")
-    assert retrying.startswith("- 🔁 **alubot** `#3`")
-    assert "failed 2×" in retrying
-    assert "RuntimeError: boom" in retrying
-    assert given_up.startswith("- ❌ **alubot** `#4`")
-    assert "given up" in given_up
+    overdue, stuck, retrying, given_up, held = found
+    assert overdue.text.startswith("⏳ **alubot** `#1`")
+    assert "60 min overdue" in overdue.text
+    assert overdue.action == "delete"
+    assert stuck.text.startswith("🧊 **alubot** `#2`")
+    assert stuck.action is None  # a bot holds it: hands off
+    assert retrying.text.startswith("🔁 **alubot** `#3`")
+    assert "failed 2×" in retrying.text
+    assert "RuntimeError: boom" in retrying.text
+    assert retrying.action == "retry"
+    assert given_up.text.startswith("❌ **alubot** `#4`")
+    assert given_up.action == "clear"
+    assert held.action is None
+
+
+def render_json(*args: object, **kwargs: object) -> str:
+    async def build() -> str:  # a view needs a running event loop
+        return json.dumps(render(*args, **kwargs).to_components(), ensure_ascii=False)  # ty: ignore[invalid-argument-type]
+
+    return asyncio.run(build())
 
 
 def test_render() -> None:
     jobs = [job(id=i, fires_at=NOW + i, kind="birthday" if i % 2 else "reminder") for i in range(1, 8)]
-    lines = render(["alubot", "irenesbot"], jobs, NOW, upcoming=3)
-    text = "\n".join(lines)
+    text = render_json(["alubot", "irenesbot"], jobs, NOW, upcoming=3)
     assert "**alubot**: 7 jobs (birthday 4, reminder 3)" in text
     assert "…and 4 more" in text
     assert "**irenesbot**: no jobs" in text
     assert "✅ No problems" in text
-    assert sum(line.startswith("- `#") for line in lines) == 3
+    assert text.count("- `#") == 3
 
 
-def test_chunk_respects_the_limit() -> None:
-    messages = chunk(["a" * 30] * 10, limit=100)
-    assert all(len(message) <= 100 for message in messages)
-    assert "\n".join(messages).count("a" * 30) == 10
-    assert chunk(["b" * 150], limit=100) == ["b" * 99 + "…"]
-    assert chunk([]) == []
+def test_render_puts_buttons_next_to_problems() -> None:
+    text = render_json(["alubot"], [job(id=9, attempts=1, error="E")], NOW, upcoming=5)
+    assert "⚠️ Problems (1)" in text
+    assert '"custom_id": "jobs:retry:alubot:9"' in text
+
+
+def test_action_queries_only_touch_unclaimed_jobs() -> None:
+    for action in ("retry", "clear", "confirm"):
+        query = action_query(action, "alubot", 9)
+        assert '"alubot".scheduled_jobs' in query
+        assert "id = 9 and claimed_at is null" in query
+    with pytest.raises(ValueError, match="plain schema name"):
+        action_query("retry", 'x"; drop table y; --', 9)
+
+
+def test_fit() -> None:
+    assert fit("short", 100) == "short"
+    assert fit("line one\nline two\nline three", 20) == "line one\nline two\n…"
+    assert fit("x" * 50, 10) == "x" * 8 + "…"
