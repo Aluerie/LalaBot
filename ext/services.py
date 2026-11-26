@@ -290,19 +290,35 @@ class ConfirmReboot(discord.ui.View):
         await interaction.response.edit_message(content="👌 Not rebooting.", view=None)
 
 
+# How long to wait for `systemctl start/restart/stop`: AluBot may take up to 5 minutes to get ready
+# (`TimeoutStartSec=300`), and an interaction's reply can be edited for 15 minutes.
+SYSTEMCTL_TIMEOUT = 600
+
+
 async def send_systemctl(
     interaction: discord.Interaction,
     request: Literal["restart", "stop", "start"],
     service: str,
 ) -> None:
-    """Run ``sudo systemctl <request> <service>`` and reply with how it went."""
-    await interaction.response.defer()
-    returncode, output = await shell.run("sudo", "systemctl", request, service)
+    """Run ``sudo systemctl <request> <service>``, saying so right away, then edit the reply into how it went.
+
+    ``systemctl start``/``restart`` only return once the service is ready, which takes a bot a minute or more.
+    """
+    command = f"`sudo systemctl {request} {service}`"
+    await interaction.response.send_message(f"⏳ {command}…")
+    started = time.monotonic()
+    try:
+        returncode, output = await shell.run("sudo", "systemctl", request, service, timeout=SYSTEMCTL_TIMEOUT)
+    except TimeoutError:
+        # Killing `systemctl` doesn't cancel the job: systemd carries on with it.
+        minutes = SYSTEMCTL_TIMEOUT // 60
+        await interaction.edit_original_response(content=f"⌛ {command} is still going after {minutes} min, see /status.")
+        return
     status = "✅" if returncode == 0 else "❌"
-    message = f"{status} `sudo systemctl {request} {service}` exited with code {returncode}."
+    message = f"{status} {command} exited with code {returncode} after {round(time.monotonic() - started)} s."
     if output.strip():
         message += f"\n{codeblock(output)}"
-    await interaction.followup.send(message)
+    await interaction.edit_original_response(content=message)
 
 
 async def send_restart(interaction: discord.Interaction, service: str) -> None:
