@@ -171,6 +171,63 @@ def format_journal_entry(line: str) -> str:
     return f"{timestamp:%H:%M:%S} {message or ''}"
 
 
+# Written right before /reboot reboots the VPS, so LalaBot knows after the boot where to say that it's back.
+REBOOT_MARKER = Path.home() / ".cache" / "lalabot" / "reboot.json"
+
+
+def write_reboot_marker(channel_id: int) -> None:
+    """Remember the channel /reboot was used in and the time, for the "back up" message after the boot."""
+    REBOOT_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    REBOOT_MARKER.write_text(json.dumps({"channel_id": channel_id, "time": time.time()}))
+
+
+def pop_reboot_marker() -> tuple[int, float] | None:
+    """Read and delete the marker of a /reboot: the channel ID and the time of the reboot, or ``None``."""
+    try:
+        data = json.loads(REBOOT_MARKER.read_text())
+    except FileNotFoundError:
+        return None
+    finally:
+        REBOOT_MARKER.unlink(missing_ok=True)
+    return data["channel_id"], data["time"]
+
+
+class ConfirmReboot(discord.ui.View):
+    """Reboot / Cancel buttons under /reboot's question, for the owner only."""
+
+    def __init__(self) -> None:
+        super().__init__(timeout=60)
+        self.message: discord.InteractionMessage | None = None
+
+    @override
+    async def interaction_check(self, interaction: discord.Interaction, /) -> bool:
+        return interaction.user.id == const.OWNER_ID
+
+    @override
+    async def on_timeout(self) -> None:
+        if self.message is not None:
+            await self.message.edit(content="⌛ Not rebooting: no answer within a minute.", view=None)
+
+    @discord.ui.button(label="Reboot", emoji="🔁", style=discord.ButtonStyle.danger)
+    async def reboot(self, interaction: discord.Interaction, _button: discord.ui.Button[ConfirmReboot]) -> None:
+        self.stop()
+        await interaction.response.edit_message(content="🔁 Rebooting the VPS, back in a minute or two.", view=None)
+        if interaction.channel_id is not None:
+            write_reboot_marker(interaction.channel_id)
+        # `systemctl reboot` only queues the reboot and returns; systemd then stops every service, LalaBot included.
+        returncode, output = await shell.run("sudo", "systemctl", "reboot")
+        if returncode != 0:
+            pop_reboot_marker()
+            await interaction.followup.send(
+                f"❌ `sudo systemctl reboot` exited with code {returncode}.\n{codeblock(output)}"
+            )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, _button: discord.ui.Button[ConfirmReboot]) -> None:
+        self.stop()
+        await interaction.response.edit_message(content="👌 Not rebooting.", view=None)
+
+
 class Services(commands.Cog):
     """Owner-only commands to manage the bots' systemd services on the VPS from Discord, and to check the VPS's health."""
 
@@ -306,8 +363,9 @@ class Services(commands.Cog):
             How many of the latest lines to show at most; older ones are cut to fit into one message.
         """
         await interaction.response.defer()
+        # No sudo needed: the `ubuntu` user is in the `adm` group, which may read the whole system journal.
         returncode, output = await shell.run(
-            "sudo", "journalctl", f"--unit={service}", f"--lines={lines}", "--output=json", "--output-fields=MESSAGE"
+            "journalctl", f"--unit={service}", f"--lines={lines}", "--output=json", "--output-fields=MESSAGE"
         )
         if returncode != 0:
             await interaction.followup.send(f"❌ `journalctl` exited with code {returncode}.\n{codeblock(output)}")
@@ -350,7 +408,7 @@ class Services(commands.Cog):
             How many of the latest lines to get.
         """
         await interaction.response.defer()
-        returncode, output = await shell.run("sudo", "journalctl", f"--unit={service}", f"--lines={lines}", "--no-pager")
+        returncode, output = await shell.run("journalctl", f"--unit={service}", f"--lines={lines}", "--no-pager")
         if returncode != 0:
             await interaction.followup.send(f"❌ `journalctl` exited with code {returncode}.\n{codeblock(output)}")
             return
@@ -369,6 +427,31 @@ class Services(commands.Cog):
         await interaction.response.defer()
         lines = await vps_health_lines()
         await interaction.followup.send("\n".join(["🖥️ **VPS health**", *lines]))
+
+    @app_commands.command()
+    @app_commands.default_permissions(manage_guild=True)
+    async def reboot(self, interaction: discord.Interaction[LalaBot]) -> None:
+        """🔁 Reboot the VPS, after a confirmation; every bot starts again on its own."""
+        if sys.platform != "linux":
+            await interaction.response.send_message("🏠 Running at home, there's no VPS to reboot.")
+            return
+        view = ConfirmReboot()
+        await interaction.response.send_message(
+            f"🔁 Reboot the VPS? Every bot goes down for a minute or two.\n{reboot_line()}", view=view
+        )
+        view.message = await interaction.original_response()
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        # `on_ready` also fires after reconnects, but the marker is gone after the first time.
+        if (marker := pop_reboot_marker()) is None:
+            return
+        channel_id, rebooted_at = marker
+        channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
+        if isinstance(channel, discord.abc.Messageable):
+            await channel.send(
+                f"✅ The VPS is back up, the reboot took {round(time.time() - rebooted_at)} s.\n{reboot_line()}"
+            )
 
 
 async def setup(bot: LalaBot) -> None:

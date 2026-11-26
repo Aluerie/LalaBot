@@ -30,7 +30,33 @@ if [ "$SUPPRESSED" -gt 0 ]; then
     MESSAGE="$MESSAGE, plus $SUPPRESSED more failure(s) since the previous alert"
 fi
 
-curl -fsS -m 10 -H "Content-Type: application/json" \
-    -d "{\"content\": \"$MESSAGE\"}" \
-    "$(cat "$WEBHOOK_URL_FILE")" || exit 0
+# The service's last log lines, usually ending with the traceback that killed it. The `ubuntu` user may read
+# the journal (`adm` group). journald may still be writing the very last lines, so wait a moment.
+sleep 2
+LOGS=$(journalctl --unit="$1" --lines=60 --output=cat --no-pager 2>/dev/null)
+
+# Python builds the JSON, since log lines are full of quotes, backslashes and backticks;
+# it keeps the newest lines that fit into Discord's 2000 characters per message.
+PAYLOAD=$(python3 -I - "$MESSAGE" "$LOGS" <<'EOF'
+import json
+import sys
+
+
+def build(logs: str) -> str:
+    return f"{message}\n```py\n{logs}\n```" if logs else message
+
+
+def discord_length(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2  # Discord counts UTF-16 code units, so an emoji counts twice
+
+
+message = sys.argv[1]
+logs = sys.argv[2].strip().replace("```", "`\u200b``")  # a zero-width space keeps them from closing the block
+while logs and discord_length(build(logs)) > 2000:
+    logs = logs.partition("\n")[2]  # drop the oldest line
+print(json.dumps({"content": build(logs)}))
+EOF
+) || PAYLOAD="{\"content\": \"$MESSAGE\"}"
+
+curl -fsS -m 10 -H "Content-Type: application/json" -d "$PAYLOAD" "$(cat "$WEBHOOK_URL_FILE")" || exit 0
 echo "$NOW 0" > "$STATE_FILE"

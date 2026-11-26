@@ -19,6 +19,7 @@ initial_extensions = (
     "ext.cmd",
     "ext.health",
     "ext.presence",
+    "ext.report",
     "ext.services",
 )
 

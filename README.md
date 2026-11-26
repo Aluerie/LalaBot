@@ -15,6 +15,10 @@ All of them are owner-only.
 * `/journal <service> [lines]` — the latest lines of a service's systemd journal, as a file.
 * `/vps` — the VPS's health: uptime, load, memory, disk, pending updates, whether it needs a reboot,
   failed systemd units, PostgreSQL clusters and whether the monitoring checks below pass.
+* `/reboot` — reboot the VPS after a confirmation button; LalaBot says when it's back and how long it took.
+* `/report [days]` — every bot's uptime, crashes and restarts, and the VPS's reboots, over the last days (7 by default).
+  It's also posted to its forum post every Monday at 09:00 UTC, once `WEEKLY_REPORT_THREAD_ID` is set.
+* `/db` — the database's size, connections, biggest tables and its last backup.
 * `/backup` — back up the VPS PostgreSQL database right now.
   It also happens on its own every day at 18:05 UTC.
 
@@ -37,7 +41,8 @@ LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bo
   When pings stop (bot down, stuck, disconnected, or the whole VPS down), healthchecks.io notifies me.
   LalaBot's check URL goes into `config.py` as `HEALTHCHECK_URL`.
 * **systemd `ExecStopPost=`** — [scripts/notify_failure.sh](scripts/notify_failure.sh) posts to a Discord webhook
-  right away whenever a service crashes, gets killed by the watchdog, or fails to start.
+  right away whenever a service crashes, gets killed by the watchdog, or fails to start,
+  with the service's last log lines (usually the traceback) in the message.
   The webhook URL lives on the VPS in `/home/ubuntu/.config/failure-webhook-url`.
   A crash loop only posts once per 30 minutes per service, counting the failures in between.
   Once a crashed service has run steadily for 5 minutes, [scripts/check_recoveries.sh](scripts/check_recoveries.sh)
@@ -58,3 +63,11 @@ LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bo
 * **LalaBot's Discord status** — every minute LalaBot checks the bots' services (itself included) and shows the result
   in its status: 🟢 online "All 4 bots up", 🟡 idle while one is (re)starting, 🔴 Do Not Disturb when one is down.
 * **Check it all** — `make monitoring` shows whether every bot and the timer above are set up on the VPS.
+
+## 🧪 Tests
+
+```sh
+uv run pytest
+```
+
+The deploy runs them too, with Ruff and ty, before it touches the VPS.

@@ -28,8 +28,11 @@ jobs:
       - name: Type check
         run: uv run ty check
 
+      - name: Test
+        run: uv run pytest
+
       - name: Import the bot and its extensions
-        run: uv run python -c "import main, ext.backup, ext.cmd, ext.health, ext.presence, ext.services"
+        run: uv run python -c "import main, ext.backup, ext.cmd, ext.health, ext.presence, ext.report, ext.services"
 
   deploy:
     needs: check

@@ -2,6 +2,7 @@
 # Licensed under MPL-2.0, see the LICENSE file for details.
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import logging
 import tempfile
@@ -16,6 +17,7 @@ from discord.ext import commands, tasks
 import config
 
 from .utils import const, shell
+from .utils.forum import get_thread
 from .utils.systemd import is_systemd_service
 
 if TYPE_CHECKING:
@@ -46,6 +48,46 @@ def check_dump(path: Path) -> None:
         if DUMP_COMPLETE_MARKER not in file.read():
             msg = f"The dump ({size} bytes) doesn't end with {DUMP_COMPLETE_MARKER.decode()!r}, so it's cut off."
             raise RuntimeError(msg)
+
+
+async def psql(query: str) -> list[list[str]]:
+    """Run a query on the bots' database with ``psql`` and return its rows as lists of strings.
+
+    Raises ``RuntimeError`` when ``psql`` fails.
+    """
+    returncode, output = await shell.run(
+        "psql",
+        "--no-psqlrc",
+        "--tuples-only",
+        "--no-align",
+        "--field-separator=\t",
+        f"--dbname={const.DATABASE_NAME}",
+        f"--command={query}",
+    )
+    if returncode != 0:
+        msg = f"psql exited with code {returncode}: {output.strip()}"
+        raise RuntimeError(msg)
+    return [line.split("\t") for line in output.splitlines() if line]
+
+
+DATABASE_QUERY = """
+select current_setting('server_version'),
+       pg_size_pretty(pg_database_size(current_database())),
+       extract(epoch from pg_postmaster_start_time())::bigint
+"""
+TABLES_QUERY = """
+select schemaname || '.' || relname, pg_size_pretty(pg_total_relation_size(relid)), n_live_tup
+from pg_stat_user_tables
+order by pg_total_relation_size(relid) desc
+limit 5
+"""
+# The bots' pools don't set `application_name`, so connections can't be told apart per bot; the total is what matters:
+# once it reaches `max_connections`, new ones get refused.
+CONNECTIONS_QUERY = """
+select count(*), count(*) filter (where state = 'active'), current_setting('max_connections')
+from pg_stat_activity
+where datname = current_database()
+"""
 
 
 async def ping_backup_healthcheck(*, failed: bool = False) -> None:
@@ -90,13 +132,7 @@ class Backup(commands.Cog):
         self.daily_backup.cancel()
 
     async def get_backup_thread(self) -> discord.Thread:
-        thread_id = const.DATABASE_BACKUP_THREAD_ID
-        # Archived threads aren't cached, hence the fetch. Sending a message to an archived thread unarchives it.
-        thread = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
-        if not isinstance(thread, discord.Thread):
-            msg = f"Channel {thread_id} is not a thread."
-            raise TypeError(msg)
-        return thread
+        return await get_thread(self.bot, const.DATABASE_BACKUP_THREAD_ID)
 
     async def send_backup(self) -> None:
         """Dump the database with ``pg_dump``, send the dump to the backups post and ping the backup healthcheck."""
@@ -144,6 +180,45 @@ class Backup(commands.Cog):
             await interaction.followup.send(f"❌ Backup failed: {error}"[:2000])
             return
         await interaction.followup.send(f"✅ Sent the backup to <#{const.DATABASE_BACKUP_THREAD_ID}>.")
+
+    async def last_backup_line(self) -> str:
+        """Describe the newest backup in the backups post: its size, age and a link to it."""
+        thread = await self.get_backup_thread()
+        async for message in thread.history(limit=20):
+            if message.attachments:
+                size = message.attachments[0].size / 1024**2
+                return f"💾 Last backup: {size:.1f} MB, <t:{int(message.created_at.timestamp())}:R> · {message.jump_url}"
+        return f"⚠️ No backup among the last 20 messages of <#{const.DATABASE_BACKUP_THREAD_ID}>"
+
+    @app_commands.command()
+    @app_commands.default_permissions(manage_guild=True)
+    async def db(self, interaction: discord.Interaction[LalaBot]) -> None:
+        """🐘 Show the database's health: size, biggest tables, connections and the last backup."""
+        if interaction.user.id != const.OWNER_ID:
+            await interaction.response.send_message(f"{const.HU_EMOTE} Not for you.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        try:
+            database, tables, connections = await asyncio.gather(
+                psql(DATABASE_QUERY), psql(TABLES_QUERY), psql(CONNECTIONS_QUERY)
+            )
+        except (OSError, TimeoutError, RuntimeError) as error:
+            await interaction.followup.send(f"❌ Couldn't query the database: {error}"[:2000])
+            return
+
+        version, size, started = database[0]
+        total, active, maximum = connections[0]
+        # Warn at 80%: each bot's pool holds its connections open, so the count only grows with new bots or pools.
+        connections_mark = "⚠️" if int(total) * 100 >= int(maximum) * 80 else "🔌"
+        lines = [
+            # `server_version` is like "19.0 (Ubuntu 19.0-2.pgdg22.04+1)"
+            f"🐘 **`{const.DATABASE_NAME}`**: {size}, PostgreSQL {version.split()[0]} running since <t:{started}:R>",
+            f"{connections_mark} Connections: {total} of max {maximum}, {active} active",
+            "📦 Biggest tables:",
+            *(f"- `{name}` {table_size}, {int(rows):,} rows" for name, table_size, rows in tables),
+            await self.last_backup_line(),
+        ]
+        await interaction.followup.send("\n".join(lines))
 
 
 async def setup(bot: LalaBot) -> None:

@@ -9,6 +9,8 @@ HU_EMOTE = "<:hu:1563745689010184232>"
 OWNER_ID = 312204139751014400
 # Posts (threads) in the bot-stuff forum channel, one per bot feature that posts to Discord.
 DATABASE_BACKUP_THREAD_ID = 1575256163321389096
+# `None` until the post exists; until then the report is only available on demand, as /report.
+WEEKLY_REPORT_THREAD_ID: int | None = None
 
 
 # VPS
