@@ -35,3 +35,15 @@ and `/reboot` is a manual step. LalaBot could do it on its own instead:
   (`/reboot`'s marker file already does that part).
 * Skip it when the file is younger than a day, so a fresh update gets a chance to be looked at first.
 * Decide whether it's wanted at all: it trades a manual reboot for a short planned outage every few weeks.
+
+## 🐳 Move PostgreSQL into Docker (maybe, after the bots are in containers)
+
+The bots move to Docker first and keep using the host's PostgreSQL 19 (through `host-gateway`).
+Moving the database into the compose stack later is optional; decide once the bots run fine in containers.
+
+* For: the version is pinned in `compose.yml` (`postgres:19`), so the same file gives an identical database at home;
+  major upgrades become "dump, change the tag, restore" instead of `pg_upgradecluster`; no more apt packages
+  and extra clusters (like the 15/16 cleanup above).
+* Against: it already works, and moving it is the riskiest step of the migration (the data has to move);
+  the data lives in a Docker volume, so a wrong `docker compose down -v` or volume prune deletes it;
+  LalaBot's `pg_dump`/`psql` would have to run through `docker exec`; one more thing that has to be up before the bots.
