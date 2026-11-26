@@ -1,7 +1,7 @@
 ; Starts vps-resources.service every 5 minutes. Setup instructions are in vps-resources.service.
 
 [Unit]
-Description=Check the VPS's disk space and memory every 5 minutes
+Description=Run the VPS's own checks (disk, memory, recoveries, updates, monitoring ping) every 5 minutes
 
 [Timer]
 OnBootSec=5min

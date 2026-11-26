@@ -41,6 +41,9 @@ Copy [config.example.py](config.example.py) to `config.py` (git-ignored) and fil
 
 ## 🩺 Monitoring
 
+The full explanation, with every notification, step-by-step walkthroughs and every file, is in
+[docs/how-it-works.md](docs/how-it-works.md).
+
 LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bot:
 
 * **healthchecks.io** — every bot (AluBot, IreBot, Dota2Bot, LalaBot) pings its own check every few minutes while it's healthy.
