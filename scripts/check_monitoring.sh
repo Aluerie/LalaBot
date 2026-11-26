@@ -23,7 +23,7 @@ for entry in \
     check '[ "$fragment" = "$repo/$unit.service" ]' "unit file is linked from the repo ($fragment)"
     check '[ "$(systemctl show -p Type --value "$unit")" = notify ]' "Type=notify"
     check '[ "$(systemctl show -p WatchdogUSec --value "$unit")" != 0 ]' "watchdog is on"
-    check 'systemctl show -p ExecStopPost --value "$unit" | grep -q notify_failure.sh' "crash alert script runs on stop"
+    check 'systemctl show -p ExecStopPost --value "$unit" | grep -q /home/ubuntu/LalaBot/scripts/notify_failure.sh' "LalaBot's crash alert script runs on stop"
     check 'grep -q "$pattern" "$config" 2>/dev/null' "HEALTHCHECK_URL is set in $config"
 done
 

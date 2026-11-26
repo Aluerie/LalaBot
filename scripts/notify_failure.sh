@@ -1,6 +1,6 @@
 #!/bin/sh
 # Post a Discord webhook message when a systemd service stops abnormally (crash, watchdog kill, start timeout).
-# Use from a unit as:  ExecStopPost=/bin/sh /home/ubuntu/LalaBot/scripts/notify_failure.sh %n
+# Every bot's unit runs this one copy:  ExecStopPost=/bin/sh /home/ubuntu/LalaBot/scripts/notify_failure.sh %n
 # The webhook URL is read from the file below (a single line, kept out of git).
 # A crash-looping service only gets one message per THROTTLE_SECONDS; the next one counts the failures in between.
 
