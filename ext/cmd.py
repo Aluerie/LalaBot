@@ -22,17 +22,17 @@ class Cmd(commands.Cog):
     @commands.is_owner()
     async def sync(self, ctx: commands.Context[LalaBot]) -> None:
         await ctx.bot.tree.sync()
-        await ctx.send(f"synced the tree {const.MADGE_EMOTE}")
+        await ctx.send(f"synced the tree {const.HU_EMOTE}")
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx: commands.Context[LalaBot], error: commands.CommandError) -> None:
         if isinstance(error, commands.CommandNotFound):
             # manual list, but whatever.
-            await ctx.send(f"{const.MADGE_EMOTE} Use slash commands!")
+            await ctx.send(f"{const.HU_EMOTE} Use slash commands!")
         elif isinstance(error, (commands.BadLiteralArgument, commands.MissingRequiredArgument)):
             await ctx.send(str(error))
         elif isinstance(error, commands.NotOwner):
-            await ctx.send(f"{const.MADGE_EMOTE} Not for you.")
+            await ctx.send(f"{const.HU_EMOTE} Not for you.")
         else:
             log.error("Unhandled error in command %s", ctx.command, exc_info=error)
 

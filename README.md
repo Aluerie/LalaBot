@@ -13,7 +13,6 @@ All of them are owner-only.
 * `/status` — whether each service is running, since when, and how many times systemd auto-restarted it.
 * `/tail <service> [lines]` — the latest lines of a service's systemd journal, right in the chat as a code block.
 * `/journal <service> [lines]` — the latest lines of a service's systemd journal, as a file.
-* `/logs <service>` — the log file a bot writes itself (`.temp/*.log` in its folder), as a file.
 * `/backup` — back up the VPS PostgreSQL database right now.
   It also happens on its own every day at 18:05 UTC.
 

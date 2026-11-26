@@ -132,7 +132,7 @@ class Backup(commands.Cog):
     async def backup(self, interaction: discord.Interaction[LalaBot]) -> None:
         """💾 Back up the database to the bot-stuff forum right now."""
         if interaction.user.id != const.OWNER_ID:
-            await interaction.response.send_message(f"{const.MADGE_EMOTE} Not for you.", ephemeral=True)
+            await interaction.response.send_message(f"{const.HU_EMOTE} Not for you.", ephemeral=True)
             return
         await interaction.response.defer()
         try:

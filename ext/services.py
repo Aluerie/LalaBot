@@ -30,12 +30,12 @@ STATE_EMOJIS = {
 }
 
 
-def service_choices(*, exclude: tuple[str, ...] = (), with_log_file: bool = False) -> list[app_commands.Choice[str]]:
+def service_choices(*, exclude: tuple[str, ...] = ()) -> list[app_commands.Choice[str]]:
     """Build the choices of a ``service`` option: every service with its emoji, minus the excluded ones."""
     return [
         app_commands.Choice(name=f"{service.emoji} {name}", value=name)
         for name, service in const.SERVICES.items()
-        if name not in exclude and (service.log_file or not with_log_file)
+        if name not in exclude
     ]
 
 
@@ -77,7 +77,7 @@ class Services(commands.Cog):
         error: app_commands.AppCommandError,
     ) -> None:
         if isinstance(error, app_commands.CheckFailure):
-            await interaction.response.send_message(f"{const.MADGE_EMOTE} Not for you.", ephemeral=True)
+            await interaction.response.send_message(f"{const.HU_EMOTE} Not for you.", ephemeral=True)
             return
         log.error("Unhandled error in /%s", interaction.command and interaction.command.name, exc_info=error)
         content = "Something went wrong, see logs."
@@ -245,24 +245,6 @@ class Services(commands.Cog):
             return
         file = discord.File(io.BytesIO(output.encode()), filename=f"{service}-journal.log")
         await interaction.followup.send(file=file)
-
-    @app_commands.command()
-    @app_commands.default_permissions(manage_guild=True)
-    @app_commands.choices(service=service_choices(with_log_file=True))
-    async def logs(self, interaction: discord.Interaction[LalaBot], service: str) -> None:
-        """🪵 Get the log file that a bot writes itself.
-
-        Parameters
-        ----------
-        service
-            Bot to get the log file of.
-        """
-        path = const.SERVICES[service].log_file
-        if path is None or not path.is_file():
-            await interaction.response.send_message(f"❌ No log file at `{path}`.")
-            return
-        await interaction.response.defer()
-        await interaction.followup.send(file=discord.File(path))
 
 
 async def setup(bot: LalaBot) -> None:
