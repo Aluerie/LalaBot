@@ -24,3 +24,14 @@ The old clusters are kept stopped as a fallback for a week; once the bots and th
    ```
 
 4. At home, update the local PostgreSQL 17 to 19 before the next backup restore test: a 19 dump may not load into 17.
+
+## 🔁 Reboot the VPS by itself when updates need it (maybe)
+
+unattended-upgrades installs kernel updates but never reboots, so `scripts/check_updates.sh` alerts after a week
+and `/reboot` is a manual step. LalaBot could do it on its own instead:
+
+* At a quiet time, e.g. Sundays 05:00 UTC, check `/var/run/reboot-required`; if it exists, post "🔁 Rebooting
+  for updates" to the bot-stuff forum and run `sudo systemctl reboot`, then post "✅ back" after the boot
+  (`/reboot`'s marker file already does that part).
+* Skip it when the file is younger than a day, so a fresh update gets a chance to be looked at first.
+* Decide whether it's wanted at all: it trades a manual reboot for a short planned outage every few weeks.

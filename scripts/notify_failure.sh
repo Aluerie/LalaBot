@@ -37,7 +37,10 @@ LOGS=$(journalctl --unit="$1" --lines=60 --output=cat --no-pager 2>/dev/null)
 
 # Python builds the JSON, since log lines are full of quotes, backslashes and backticks;
 # it keeps the newest lines that fit into Discord's 2000 characters per message.
-PAYLOAD=$(python3 -I - "$MESSAGE" "$LOGS" <<'EOF'
+# It prints two payloads, one per line: with 🔄 Restart, 📓 Tail and 📁 Journal buttons, and without them.
+# The buttons only work through a webhook LalaBot created (/alertwebhook), which also handles the clicks;
+# any other webhook rejects them, and then the alert goes out without buttons.
+PAYLOADS=$(python3 -I - "$MESSAGE" "$LOGS" "${1%.service}" <<'EOF'
 import json
 import sys
 
@@ -50,13 +53,26 @@ def discord_length(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2  # Discord counts UTF-16 code units, so an emoji counts twice
 
 
-message = sys.argv[1]
+message, service = sys.argv[1], sys.argv[3]
 logs = sys.argv[2].strip().replace("```", "`\u200b``")  # a zero-width space keeps them from closing the block
 while logs and discord_length(build(logs)) > 2000:
     logs = logs.partition("\n")[2]  # drop the oldest line
-print(json.dumps({"content": build(logs)}))
+plain = {"content": build(logs)}
+buttons = [
+    {"type": 2, "style": 2, "label": label, "emoji": {"name": emoji}, "custom_id": f"alert:{action}:{service}"}
+    for action, label, emoji in (("restart", "Restart", "🔄"), ("tail", "Tail", "📓"), ("journal", "Journal", "📁"))
+]
+print(json.dumps({**plain, "components": [{"type": 1, "components": buttons}]}))
+print(json.dumps(plain))
 EOF
-) || PAYLOAD="{\"content\": \"$MESSAGE\"}"
+)
+WITH_BUTTONS=$(printf '%s\n' "$PAYLOADS" | sed -n 1p)
+PLAIN=$(printf '%s\n' "$PAYLOADS" | sed -n 2p)
+[ -n "$PLAIN" ] || PLAIN="{\"content\": \"$MESSAGE\"}"
 
-curl -fsS -m 10 -H "Content-Type: application/json" -d "$PAYLOAD" "$(cat "$WEBHOOK_URL_FILE")" || exit 0
+URL=$(cat "$WEBHOOK_URL_FILE")
+post() {
+    curl -fsS -m 10 -o /dev/null -H "Content-Type: application/json" -d "$2" "$1"
+}
+{ [ -n "$WITH_BUTTONS" ] && post "$URL?with_components=true" "$WITH_BUTTONS" 2>/dev/null; } || post "$URL" "$PLAIN" || exit 0
 echo "$NOW 0" > "$STATE_FILE"

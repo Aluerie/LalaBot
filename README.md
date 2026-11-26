@@ -13,12 +13,18 @@ All of them are owner-only.
 * `/status` — whether each service is running, since when, and how many times systemd auto-restarted it.
 * `/tail <service> [lines]` — the latest lines of a service's systemd journal, right in the chat as a code block.
 * `/journal <service> [lines]` — the latest lines of a service's systemd journal, as a file.
+* `/grep <service> <pattern> [since]` — search a service's journal, e.g. every `Traceback` of the last day;
+  shows the newest matches and attaches all of them when they don't fit.
+* `/versions` — the commit each bot runs, and whether it's behind GitHub, has local changes,
+  or wasn't restarted since its last commit (a deploy that didn't fully go through).
 * `/vps` — the VPS's health: uptime, load, memory, disk, pending updates, whether it needs a reboot,
   failed systemd units, PostgreSQL clusters and whether the monitoring checks below pass.
 * `/reboot` — reboot the VPS after a confirmation button; LalaBot says when it's back and how long it took.
 * `/report [days]` — every bot's uptime, crashes and restarts, and the VPS's reboots, over the last days (7 by default).
   It's also posted to its forum post every Monday at 09:00 UTC, once `WEEKLY_REPORT_THREAD_ID` is set.
 * `/db` — the database's size, connections, biggest tables and its last backup.
+* `/alertwebhook` — create LalaBot's own webhook in the current channel and make the VPS alerts post through it.
+  Only alerts through LalaBot's webhook can have working buttons (see below).
 * `/backup` — back up the VPS PostgreSQL database right now.
   It also happens on its own every day at 18:05 UTC.
 
@@ -42,7 +48,8 @@ LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bo
   LalaBot's check URL goes into `config.py` as `HEALTHCHECK_URL`.
 * **systemd `ExecStopPost=`** — [scripts/notify_failure.sh](scripts/notify_failure.sh) posts to a Discord webhook
   right away whenever a service crashes, gets killed by the watchdog, or fails to start,
-  with the service's last log lines (usually the traceback) in the message.
+  with the service's last log lines (usually the traceback) in the message,
+  and 🔄 Restart, 📓 Tail and 📁 Journal buttons that LalaBot handles (when the webhook is LalaBot's, from `/alertwebhook`).
   The webhook URL lives on the VPS in `/home/ubuntu/.config/failure-webhook-url`.
   A crash loop only posts once per 30 minutes per service, counting the failures in between.
   Once a crashed service has run steadily for 5 minutes, [scripts/check_recoveries.sh](scripts/check_recoveries.sh)

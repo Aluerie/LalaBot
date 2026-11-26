@@ -12,7 +12,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, override
+from typing import TYPE_CHECKING, Any, Literal, Self, override
 
 import discord
 from discord import app_commands
@@ -22,6 +22,8 @@ from .utils import const, shell
 from .utils.systemd import monotonic_to_unix, show_services
 
 if TYPE_CHECKING:
+    import re
+
     from main import LalaBot
 
 
@@ -161,14 +163,74 @@ async def vps_health_lines() -> list[str]:
     return lines
 
 
-def format_journal_entry(line: str) -> str:
-    """Turn one line of ``journalctl --output=json`` into a short ``HH:MM:SS message`` line (time in UTC)."""
+def format_journal_entry(line: str, *, with_date: bool = False) -> str:
+    """Turn one line of ``journalctl --output=json`` into a short ``HH:MM:SS message`` line (time in UTC).
+
+    With ``with_date``, the line starts with the day too: ``DD/MM HH:MM:SS message``.
+    """
     entry = json.loads(line)
     timestamp = dt.datetime.fromtimestamp(int(entry["__REALTIME_TIMESTAMP"]) / 1_000_000, tz=dt.UTC)
     message = entry.get("MESSAGE")
     if isinstance(message, list):  # journald stores messages that aren't valid UTF-8 as a list of bytes
         message = bytes(message).decode(errors="replace")
-    return f"{timestamp:%H:%M:%S} {message or ''}"
+    time_format = "%d/%m %H:%M:%S" if with_date else "%H:%M:%S"
+    return f"{timestamp:{time_format}} {message or ''}"
+
+
+def fit_newest(entries: list[str], budget: int = 1850) -> list[str]:
+    """Take the newest lines (the end of ``entries``) that fit into ``budget`` characters together, in order.
+
+    When even the newest line alone is too long, its start is taken.
+    """
+    shown: list[str] = []
+    for entry in reversed(entries):
+        if len(entry) + 1 > budget:
+            if not shown:
+                shown.append(entry[:budget])
+            break
+        shown.append(entry)
+        budget -= len(entry) + 1
+    shown.reverse()
+    return shown
+
+
+def journal_message(header: str, lines: list[str]) -> str:
+    """A message with a header and journal lines in a code block."""
+    body = "\n".join(lines).replace("```", "`\N{ZERO WIDTH SPACE}``") or "(empty)"
+    # `py` highlighting mostly helps with tracebacks, which are what one usually looks for in there.
+    return f"{header}\n```py\n{body}\n```"
+
+
+def format_version_line(
+    name: str,
+    *,
+    commit: str | None,
+    behind: str | None,
+    dirty: bool,
+    started: int | None,
+) -> str:
+    """One line of /versions: the commit a bot's checkout is at, and whether that's what GitHub and the bot have.
+
+    ``commit`` is ``git log -1 --format=%h%x00%ct%x00%s`` output, ``behind`` the count of commits on GitHub's ``main``
+    missing from the checkout (``None`` when GitHub couldn't be reached), ``started`` when the bot last started.
+    """
+    if commit is None:
+        return f"❔ {label(name)}: couldn't read its git checkout"
+    short_hash, committed, subject = commit.strip().split("\0", 2)
+    notes: list[str] = []
+    if behind is None:
+        notes.append("❔ couldn't reach GitHub")
+    elif int(behind):
+        notes.append(f"⚠️ {behind} commit(s) behind GitHub")
+    if dirty:
+        notes.append("✏️ has local changes")
+    if started is not None and started < int(committed):
+        notes.append("⚠️ started before this commit, so it runs an older version")
+    mark = "✅" if not notes else "⚠️" if any(note.startswith("⚠️") for note in notes) else "❔"
+    line = f"{mark} {label(name)} `{short_hash}` {subject[:70]} (<t:{committed}:R>)"
+    if notes:
+        line += "\n-# " + " · ".join(notes)
+    return line
 
 
 # Written right before /reboot reboots the VPS, so LalaBot knows after the boot where to say that it's back.
@@ -228,11 +290,160 @@ class ConfirmReboot(discord.ui.View):
         await interaction.response.edit_message(content="👌 Not rebooting.", view=None)
 
 
+async def send_systemctl(
+    interaction: discord.Interaction,
+    request: Literal["restart", "stop", "start"],
+    service: str,
+) -> None:
+    """Run ``sudo systemctl <request> <service>`` and reply with how it went."""
+    await interaction.response.defer()
+    returncode, output = await shell.run("sudo", "systemctl", request, service)
+    status = "✅" if returncode == 0 else "❌"
+    message = f"{status} `sudo systemctl {request} {service}` exited with code {returncode}."
+    if output.strip():
+        message += f"\n{codeblock(output)}"
+    await interaction.followup.send(message)
+
+
+async def send_restart(interaction: discord.Interaction, service: str) -> None:
+    """Restart a service and reply with how it went; LalaBot itself only says bye, since it gets stopped."""
+    if service == "lalabot":
+        # The command below kills this very process, so there would be nobody left to send the result.
+        await interaction.response.send_message(f"🔄 Restarting {label(service)}, bye.")
+        await asyncio.create_subprocess_exec("sudo", "systemctl", "restart", service)
+        return
+    await send_systemctl(interaction, "restart", service)
+
+
+async def send_tail(interaction: discord.Interaction, service: str, lines: int) -> None:
+    """Reply with the last ``lines`` lines of a service's journal that fit into one message."""
+    await interaction.response.defer()
+    # No sudo needed: the `ubuntu` user is in the `adm` group, which may read the whole system journal.
+    returncode, output = await shell.run(
+        "journalctl", f"--unit={service}", f"--lines={lines}", "--output=json", "--output-fields=MESSAGE"
+    )
+    if returncode != 0:
+        await interaction.followup.send(f"❌ `journalctl` exited with code {returncode}.\n{codeblock(output)}")
+        return
+    shown = fit_newest([format_journal_entry(line) for line in output.splitlines() if line.startswith("{")])
+    header = f"📓 Last {len(shown)} journal lines of {label(service)} (UTC):"
+    await interaction.followup.send(journal_message(header, shown))
+
+
+async def send_journal(interaction: discord.Interaction, service: str, lines: int) -> None:
+    """Reply with the last ``lines`` lines of a service's journal as a file."""
+    await interaction.response.defer()
+    returncode, output = await shell.run("journalctl", f"--unit={service}", f"--lines={lines}", "--no-pager")
+    if returncode != 0:
+        await interaction.followup.send(f"❌ `journalctl` exited with code {returncode}.\n{codeblock(output)}")
+        return
+    file = discord.File(io.BytesIO(output.encode()), filename=f"{service}-journal.log")
+    await interaction.followup.send(file=file)
+
+
+class AlertButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"alert:(?P<action>restart|tail|journal):(?P<service>[a-z0-9_-]+)",
+):
+    """🔄 Restart, 📓 Tail and 📁 Journal buttons under the crash alerts that scripts/notify_failure.sh posts.
+
+    The alerts come from a shell script through LalaBot's webhook, so no view of LalaBot's sent these buttons.
+    discord.py matches clicks by their custom ID against the template instead, which keeps old alerts' buttons
+    working across restarts. Only works with a webhook LalaBot created itself (/alertwebhook): Discord sends
+    the clicks to the webhook's application, and doesn't allow such buttons on webhooks of no application.
+    """
+
+    def __init__(self, action: str, service: str) -> None:
+        super().__init__(discord.ui.Button(label=action, custom_id=f"alert:{action}:{service}"))
+        self.action: str = action
+        self.service: str = service
+
+    @classmethod
+    @override
+    async def from_custom_id(
+        cls,
+        interaction: discord.Interaction,
+        item: discord.ui.Item[Any],
+        match: re.Match[str],
+        /,
+    ) -> Self:
+        return cls(match["action"], match["service"])
+
+    @override
+    async def interaction_check(self, interaction: discord.Interaction, /) -> bool:
+        if interaction.user.id != const.OWNER_ID:
+            await interaction.response.send_message(f"{const.HU_EMOTE} Not for you.", ephemeral=True)
+            return False
+        if self.service not in const.SERVICES:
+            await interaction.response.send_message(f"❌ Unknown service `{self.service}`.", ephemeral=True)
+            return False
+        return True
+
+    @override
+    async def callback(self, interaction: discord.Interaction) -> None:
+        match self.action:
+            case "restart":
+                await send_restart(interaction, self.service)
+            case "tail":
+                await send_tail(interaction, self.service, 30)
+            case _:
+                await send_journal(interaction, self.service, 5000)
+
+
+# The alert scripts read their Discord webhook URL from this file; /alertwebhook replaces it.
+ALERTS_WEBHOOK_URL_FILE = Path.home() / ".config" / "failure-webhook-url"
+
+
+def save_alerts_webhook_url(url: str) -> None:
+    """Make ``url`` the alerts' webhook, keeping the previous URL next to it as ``*.old``."""
+    if ALERTS_WEBHOOK_URL_FILE.exists():
+        ALERTS_WEBHOOK_URL_FILE.replace(ALERTS_WEBHOOK_URL_FILE.with_name(ALERTS_WEBHOOK_URL_FILE.name + ".old"))
+    ALERTS_WEBHOOK_URL_FILE.write_text(url + "\n")
+    ALERTS_WEBHOOK_URL_FILE.chmod(0o600)
+
+
+async def version_line(name: str, folder: Path, started: int | None) -> str:
+    """Build the /versions line of a bot from its git checkout, fetching GitHub's ``main`` first."""
+    git = ("git", "-C", str(folder))
+    fetched = await output_of(*git, "fetch", "--quiet", "origin", "main")
+    commit, behind, status = await asyncio.gather(
+        output_of(*git, "log", "-1", "--format=%h%x00%ct%x00%s"),
+        output_of(*git, "rev-list", "--count", "HEAD..origin/main"),
+        output_of(*git, "status", "--porcelain", "--untracked-files=no"),
+    )
+    return format_version_line(
+        name,
+        commit=commit,
+        behind=behind.strip() if fetched is not None and behind is not None else None,
+        dirty=bool(status and status.strip()),
+        started=started,
+    )
+
+
+GREP_SINCE_CHOICES = [
+    app_commands.Choice(name="last hour", value="1 hour ago"),
+    app_commands.Choice(name="last 6 hours", value="6 hours ago"),
+    app_commands.Choice(name="last day", value="1 day ago"),
+    app_commands.Choice(name="last week", value="7 days ago"),
+    app_commands.Choice(name="last 30 days", value="30 days ago"),
+]
+# The newest this many matches are fetched; the reply shows what fits and attaches all of them as a file.
+GREP_MAX_MATCHES = 1000
+
+
 class Services(commands.Cog):
     """Owner-only commands to manage the bots' systemd services on the VPS from Discord, and to check the VPS's health."""
 
     def __init__(self, bot: LalaBot) -> None:
         self.bot: LalaBot = bot
+
+    @override
+    async def cog_load(self) -> None:
+        self.bot.add_dynamic_items(AlertButton)
+
+    @override
+    async def cog_unload(self) -> None:
+        self.bot.remove_dynamic_items(AlertButton)
 
     @override
     def interaction_check(self, interaction: discord.Interaction, /) -> bool:
@@ -256,21 +467,6 @@ class Services(commands.Cog):
 
     # --- START / STOP / RESTART ---------------------------------------------------------------------------------------
 
-    @staticmethod
-    async def systemctl(
-        interaction: discord.Interaction[LalaBot],
-        request: Literal["restart", "stop", "start"],
-        service: str,
-    ) -> None:
-        """Run ``sudo systemctl <request> <service>`` and reply with how it went."""
-        await interaction.response.defer()
-        returncode, output = await shell.run("sudo", "systemctl", request, service)
-        status = "✅" if returncode == 0 else "❌"
-        message = f"{status} `sudo systemctl {request} {service}` exited with code {returncode}."
-        if output.strip():
-            message += f"\n{codeblock(output)}"
-        await interaction.followup.send(message)
-
     @app_commands.command()
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.choices(service=service_choices())
@@ -282,12 +478,7 @@ class Services(commands.Cog):
         service
             Bot to restart.
         """
-        if service == "lalabot":
-            # The command below kills this very process, so there would be nobody left to send the result.
-            await interaction.response.send_message(f"🔄 Restarting {label(service)}, bye.")
-            await asyncio.create_subprocess_exec("sudo", "systemctl", "restart", service)
-            return
-        await self.systemctl(interaction, "restart", service)
+        await send_restart(interaction, service)
 
     # LalaBot isn't among /start and /stop choices: it's already running if it gets the command,
     # and once stopped, nobody could start it back from Discord.
@@ -303,7 +494,7 @@ class Services(commands.Cog):
         service
             Bot to start.
         """
-        await self.systemctl(interaction, "start", service)
+        await send_systemctl(interaction, "start", service)
 
     @app_commands.command()
     @app_commands.default_permissions(manage_guild=True)
@@ -316,7 +507,7 @@ class Services(commands.Cog):
         service
             Bot to stop.
         """
-        await self.systemctl(interaction, "stop", service)
+        await send_systemctl(interaction, "stop", service)
 
     # --- STATUS / JOURNAL / LOGS --------------------------------------------------------------------------------------
 
@@ -362,32 +553,7 @@ class Services(commands.Cog):
         lines
             How many of the latest lines to show at most; older ones are cut to fit into one message.
         """
-        await interaction.response.defer()
-        # No sudo needed: the `ubuntu` user is in the `adm` group, which may read the whole system journal.
-        returncode, output = await shell.run(
-            "journalctl", f"--unit={service}", f"--lines={lines}", "--output=json", "--output-fields=MESSAGE"
-        )
-        if returncode != 0:
-            await interaction.followup.send(f"❌ `journalctl` exited with code {returncode}.\n{codeblock(output)}")
-            return
-
-        entries = [format_journal_entry(line) for line in output.splitlines() if line.startswith("{")]
-        # Take the newest lines that fit into one message, keeping room for the header and code block fences.
-        shown: list[str] = []
-        budget = 1900
-        for entry in reversed(entries):
-            if len(entry) + 1 > budget:
-                if not shown:  # the newest line alone is too long, so show its start
-                    shown.append(entry[:budget])
-                break
-            shown.append(entry)
-            budget -= len(entry) + 1
-        shown.reverse()
-
-        header = f"📓 Last {len(shown)} journal lines of {label(service)} (UTC):"
-        body = "\n".join(shown).replace("```", "`\N{ZERO WIDTH SPACE}``") or "(empty)"
-        # `py` highlighting mostly helps with tracebacks, which are what one usually looks for in there.
-        await interaction.followup.send(f"{header}\n```py\n{body}\n```")
+        await send_tail(interaction, service, lines)
 
     @app_commands.command()
     @app_commands.default_permissions(manage_guild=True)
@@ -407,13 +573,105 @@ class Services(commands.Cog):
         lines
             How many of the latest lines to get.
         """
+        await send_journal(interaction, service, lines)
+
+    @app_commands.command()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.choices(service=service_choices(), since=GREP_SINCE_CHOICES)
+    async def grep(
+        self,
+        interaction: discord.Interaction[LalaBot],
+        service: str,
+        pattern: app_commands.Range[str, 1, 100],
+        since: str = "1 day ago",
+    ) -> None:
+        """🔎 Search a bot's systemd journal, e.g. for every Traceback of the last day.
+
+        Parameters
+        ----------
+        service
+            Bot to search the journal of.
+        pattern
+            Regular expression to look for; case-insensitive unless it has uppercase letters.
+        since
+            How far back to search.
+        """
         await interaction.response.defer()
-        returncode, output = await shell.run("journalctl", f"--unit={service}", f"--lines={lines}", "--no-pager")
-        if returncode != 0:
-            await interaction.followup.send(f"❌ `journalctl` exited with code {returncode}.\n{codeblock(output)}")
+        returncode, output = await shell.run(
+            "journalctl",
+            f"--unit={service}",
+            f"--grep={pattern}",
+            f"--since={since}",
+            f"--lines={GREP_MAX_MATCHES}",
+            "--output=json",
+            "--output-fields=MESSAGE",
+            "--no-pager",
+        )
+        entries = [format_journal_entry(line, with_date=True) for line in output.splitlines() if line.startswith("{")]
+        if not entries:
+            # journalctl exits with 1 both when nothing matches and for errors, e.g. an invalid pattern.
+            if returncode in {0, 1} and not output.strip():
+                await interaction.followup.send(f"🔎 No `{pattern}` in {label(service)}'s journal since {since}.")
+            else:
+                await interaction.followup.send(f"❌ `journalctl` exited with code {returncode}.\n{codeblock(output)}")
             return
-        file = discord.File(io.BytesIO(output.encode()), filename=f"{service}-journal.log")
-        await interaction.followup.send(file=file)
+
+        shown = fit_newest(entries)
+        count = f"{len(entries)}+" if len(entries) == GREP_MAX_MATCHES else str(len(entries))
+        header = f"🔎 {count} lines with `{pattern}` in {label(service)}'s journal since {since}"
+        header += f", the newest {len(shown)} (UTC):" if len(shown) < len(entries) else " (UTC):"
+        files: list[discord.File] = []
+        if len(shown) < len(entries):
+            files.append(discord.File(io.BytesIO("\n".join(entries).encode()), filename=f"{service}-grep.log"))
+        await interaction.followup.send(journal_message(header, shown), files=files)
+
+    @app_commands.command()
+    @app_commands.default_permissions(manage_guild=True)
+    async def versions(self, interaction: discord.Interaction[LalaBot]) -> None:
+        """🏷️ Show the commit each bot runs, and whether it's behind GitHub or not restarted since."""
+        if sys.platform != "linux":
+            await interaction.response.send_message("🏠 Running at home, there are no deployed bots to check.")
+            return
+        await interaction.response.defer()
+        try:
+            services = await show_services(const.SERVICES, ["ActiveEnterTimestampMonotonic"])
+        except RuntimeError:
+            services = {}
+        lines = await asyncio.gather(
+            *(
+                version_line(
+                    name,
+                    Path.home() / service.folder,
+                    monotonic_to_unix(services.get(name, {}).get("ActiveEnterTimestampMonotonic", "")),
+                )
+                for name, service in const.SERVICES.items()
+            )
+        )
+        await interaction.followup.send("\n".join(lines))
+
+    @app_commands.command()
+    @app_commands.default_permissions(manage_guild=True)
+    async def alertwebhook(self, interaction: discord.Interaction[LalaBot]) -> None:
+        """🪝 Create LalaBot's own webhook in this channel and make the VPS alerts post through it, with buttons."""
+        if sys.platform != "linux":
+            await interaction.response.send_message("🏠 Running at home, the VPS's alerts aren't here.", ephemeral=True)
+            return
+        channel = interaction.channel
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message("❌ Use it in a text channel.", ephemeral=True)
+            return
+        try:
+            webhook = await channel.create_webhook(name="VPS alerts", reason="Alerts with buttons, from /alertwebhook")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ I need the Manage Webhooks permission here.", ephemeral=True)
+            return
+        save_alerts_webhook_url(webhook.url)
+        await interaction.response.send_message(
+            f"🪝 The VPS alerts now post here through **{webhook.name}**, with buttons. "
+            f"The previous URL is kept in `{ALERTS_WEBHOOK_URL_FILE}.old`; "
+            "its webhook can be deleted in the channel's Integrations settings.",
+            ephemeral=True,
+        )
 
     # --- VPS ----------------------------------------------------------------------------------------------------------
 

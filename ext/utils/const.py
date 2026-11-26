@@ -17,14 +17,16 @@ WEEKLY_REPORT_THREAD_ID: int | None = 1575370722312720535
 class Service(NamedTuple):
     emoji: str
     """Shown next to the service's name in command options and replies."""
+    folder: str
+    """The bot's git checkout on the VPS, in the home folder."""
 
 
 # systemd services on the VPS, by their unit name.
 SERVICES: dict[str, Service] = {
-    "alubot": Service("🦢"),
-    "dota2bot": Service("⚔️"),
-    "irebot": Service("💜"),
-    "lalabot": Service("🖤"),
+    "alubot": Service("🦢", "AluBot"),
+    "dota2bot": Service("⚔️", "Dota2Bot"),
+    "irebot": Service("💜", "IrenesBot"),
+    "lalabot": Service("🖤", "LalaBot"),
 }
 # PostgreSQL database with the data of all the bots on the VPS.
 DATABASE_NAME = "alubot"
