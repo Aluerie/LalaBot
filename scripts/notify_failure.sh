@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright (C) 2020-present, Irene Adler 💜 (@Aluerie).
+# Licensed under MPL-2.0, see the LICENSE file for details.
 # Post a Discord webhook message when a systemd service stops abnormally (crash, watchdog kill, start timeout).
 # Every bot's unit runs this one copy:  ExecStopPost=/bin/sh /home/ubuntu/LalaBot/scripts/notify_failure.sh %n
 # The webhook URL is read from the file below (a single line, kept out of git).

@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright (C) 2020-present, Irene Adler 💜 (@Aluerie).
+# Licensed under MPL-2.0, see the LICENSE file for details.
 # Show, for every bot on the VPS, whether its outage alerts are set up:
 # the unit is linked from the repo, uses notify + watchdog, runs the crash alert script, and has a healthcheck URL.
 # Run it on the VPS:  sh ~/LalaBot/scripts/check_monitoring.sh   (or `make monitoring` from LalaBot at home)

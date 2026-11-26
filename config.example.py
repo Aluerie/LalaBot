@@ -1,3 +1,5 @@
+# Copyright (C) 2020-present, Irene Adler 💜 (@Aluerie).
+# Licensed under MPL-2.0, see the LICENSE file for details.
 # Copy this file to `config.py` (git-ignored) and fill in the values.
 
 TOKEN = ""  # Discord bot token: Discord Developer Portal -> your application -> Bot -> Reset Token

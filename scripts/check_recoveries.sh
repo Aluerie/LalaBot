@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright (C) 2020-present, Irene Adler 💜 (@Aluerie).
+# Licensed under MPL-2.0, see the LICENSE file for details.
 # Post "back up" to the crash alerts' Discord webhook once a service that crashed has been running steadily again,
 # with how many more failures there were after the last crash alert (the ones the alert throttling swallowed).
 # notify_failure.sh rewrites $STATE_DIR/<unit> on every crash (alerted or throttled), so that file's modification time

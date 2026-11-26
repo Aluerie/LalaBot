@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright (C) 2020-present, Irene Adler 💜 (@Aluerie).
+# Licensed under MPL-2.0, see the LICENSE file for details.
 # Post a Discord webhook alert when the VPS runs low on disk space or memory.
 # Run every 5 minutes by vps-resources.timer. For each problem it posts once when it starts,
 # a reminder every REMIND_SECONDS while it lasts, and a "fine again" message when it's over.
