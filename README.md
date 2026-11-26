@@ -23,6 +23,8 @@ All of them are owner-only.
 * `/report [days]` — every bot's uptime, crashes and restarts, and the VPS's reboots, over the last days (7 by default).
   It's also posted to its forum post every Monday at 09:00 UTC, once `WEEKLY_REPORT_THREAD_ID` is set.
 * `/db` — the database's size, connections, biggest tables and its last backup.
+* `/jobs [upcoming]` — every bot's scheduled jobs (reminders, birthdays...): how many of each kind, the next ones,
+  and the ones with problems (stuck, overdue, retrying or given up on).
 * `/alertwebhook` — create LalaBot's own webhook in the current channel and make the VPS alerts post through it.
   Only alerts through LalaBot's webhook can have working buttons (see below).
 * `/backup` — back up the VPS PostgreSQL database right now.

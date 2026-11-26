@@ -400,6 +400,8 @@ The `ubuntu` user can read the whole journal without `sudo` (it's in the `adm` g
 
 **[ext/backup.py](../ext/backup.py)**: the daily backup and `/backup` (see the walkthrough), and `/db`: database size, PostgreSQL version and uptime, connections out of `max_connections` (⚠️ at 80%) with a per-bot breakdown, the 5 biggest tables, and a link to the last backup. Runs `psql` and `pg_dump` as `ubuntu`.
 
+**[ext/jobs.py](../ext/jobs.py)**: `/jobs [upcoming]`: the bots' scheduled jobs from `shared.scheduler` (how it works: `docs/scheduler.md` in the shared repo). It finds every schema with a `scheduled_jobs` table, so a new bot that uses the scheduler shows up by itself. Per bot: jobs per kind and the next few (AluBot's users as mentions, which don't ping). Then the problems: ⏳ overdue by 5+ min and unclaimed (the bot is down or the handler isn't loaded), 🧊 claimed for 10+ min (a hanging handler), 🔁 retrying after a failure, ❌ an occurrence given up on (its last error line). Read-only, through `psql` as `ubuntu`.
+
 **[ext/report.py](../ext/report.py)**: the weekly report and `/report [days]`. It reads **systemd's own messages** about each bot from the journal (`journalctl _PID=1 UNIT=…`, so not the bots' logs): "Started" = up, "Stopping" / "Main process exited" / "Failed with result" = down, "Failed with result" = a crash, "Scheduled restart job" = an auto-restart. From the up/down times it computes downtime and uptime %. VPS reboots come from `journalctl --list-boots`.
 
 **[ext/cmd.py](../ext/cmd.py)**: the `@LalaBot sync` text command (registers slash commands with Discord) and text-command error replies.
@@ -409,6 +411,8 @@ The `ubuntu` user can read the whole journal without `sudo` (it's in the `adm` g
 **[ext/utils/systemd.py](../ext/utils/systemd.py)**: `sd_notify()` (send `READY=1` / `WATCHDOG=1`), `watchdog_loop()`, `is_systemd_service()` (systemd sets `INVOCATION_ID` for every service, so its presence means "prod on the VPS", its absence "at home"), `show_services()` (parse `systemctl show`), and `monotonic_to_unix()` (systemd timestamps are microseconds since boot).
 
 **[ext/utils/shell.py](../ext/utils/shell.py)**: `run()`: run a program, return its exit code and output, kill it after a timeout. Children don't get the `NOTIFY_SOCKET` / `WATCHDOG_*` variables, or they'd try to notify systemd too.
+
+**[ext/utils/postgres.py](../ext/utils/postgres.py)**: `psql()`: run a query with the `psql` client and get the rows as lists of strings, for `/db` and `/jobs`.
 
 **[ext/utils/forum.py](../ext/utils/forum.py)**: `get_thread()`: fetch a forum post by ID (archived posts aren't cached, so it fetches).
 
@@ -511,6 +515,7 @@ LalaBot doesn't use `shared`: it's a plain discord.py bot with `logging`, so it 
 | restart a bot | **🔄 Restart**, `/restart <bot>` |
 | check the server | `/vps` |
 | check the database | `/db` |
+| check reminders, birthdays and other scheduled jobs | `/jobs` |
 | check deploys landed | `/versions` |
 | see the week | `/report [days]` |
 | back up now | `/backup` |

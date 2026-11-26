@@ -18,6 +18,7 @@ initial_extensions = (
     "ext.backup",
     "ext.cmd",
     "ext.health",
+    "ext.jobs",
     "ext.presence",
     "ext.report",
     "ext.services",

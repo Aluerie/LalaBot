@@ -18,6 +18,7 @@ import config
 
 from .utils import const, shell
 from .utils.forum import get_thread
+from .utils.postgres import psql
 from .utils.systemd import is_systemd_service
 
 if TYPE_CHECKING:
@@ -48,26 +49,6 @@ def check_dump(path: Path) -> None:
         if DUMP_COMPLETE_MARKER not in file.read():
             msg = f"The dump ({size} bytes) doesn't end with {DUMP_COMPLETE_MARKER.decode()!r}, so it's cut off."
             raise RuntimeError(msg)
-
-
-async def psql(query: str) -> list[list[str]]:
-    """Run a query on the bots' database with ``psql`` and return its rows as lists of strings.
-
-    Raises ``RuntimeError`` when ``psql`` fails.
-    """
-    returncode, output = await shell.run(
-        "psql",
-        "--no-psqlrc",
-        "--tuples-only",
-        "--no-align",
-        "--field-separator=\t",
-        f"--dbname={const.DATABASE_NAME}",
-        f"--command={query}",
-    )
-    if returncode != 0:
-        msg = f"psql exited with code {returncode}: {output.strip()}"
-        raise RuntimeError(msg)
-    return [line.split("\t") for line in output.splitlines() if line]
 
 
 DATABASE_QUERY = """
