@@ -260,7 +260,7 @@ The webhook in use was created **by LalaBot** with `/alertwebhook`. That matters
 - **Weekly report forum post**: every Monday 09:00 UTC, each bot's uptime %, downtime, crashes, auto-restarts and starts over 7 days, plus VPS reboots.
 - **After `/reboot`**: "✅ The VPS is back up, the reboot took N s." in the channel where I ran it.
 - **Each bot's error webhook**: exceptions that *don't* kill the bot (a failed command, a broken task) go to that bot's error channel, through `shared`'s `ErrorNotificationManager`. That's separate from this setup but covers the "running, but something inside failed" case.
-- **Log mirrors**: AluBot and IreBot also copy their log lines into a logs channel through their `WEBHOOK_LOGGER`. Handy for reading along, but it's not an alert: it goes quiet when the bot dies.
+- **Log mirrors**: AluBot, Dota2Bot and IreBot also copy their log lines (INFO and above) into a logs channel through their `WEBHOOK_LOGGER`, using `shared`'s `DiscordWebhookLogs`. Handy for reading along, but it's not an alert: it goes quiet when the bot dies.
 
 ### 💜 In Twitch chat
 
