@@ -182,7 +182,7 @@ The webhook in use was created **by LalaBot** with `/alertwebhook`. That matters
 
 ## 🔔 Every notification, one by one
 
-### In #💖healthcheck, from the scripts (webhook "VPS alerts")
+### 🐚 In #💖healthcheck, from the scripts (webhook "VPS alerts")
 
 #### 💥 A bot crashed
 
@@ -224,7 +224,7 @@ The webhook in use was created **by LalaBot** with `/alertwebhook`. That matters
 - *From:* the same script. Ubuntu creates `/var/run/reboot-required` when an update (usually a new kernel) needs a reboot; the alert fires once that file is a week old.
 - *Fix:* `/reboot` in Discord. *Then:* ✅ "The VPS is rebooted, the updates are in use."
 
-### In #💖healthcheck, from healthchecks.io
+### 💓 In #💖healthcheck, from healthchecks.io
 
 #### 💓 A bot's healthcheck is down
 
@@ -240,7 +240,7 @@ The webhook in use was created **by LalaBot** with `/alertwebhook`. That matters
 
 - Either the daily backup failed (LalaBot pinged `/fail`), or no backup happened for 26 hours (LalaBot was down at 18:05 UTC).
 
-### By email / the healthchecks.io app
+### 📧 By email / the healthchecks.io app
 
 #### 🩺 The monitoring healthcheck is down
 
@@ -253,7 +253,7 @@ The webhook in use was created **by LalaBot** with `/alertwebhook`. That matters
 - In that state, the alerts above can't reach Discord, which is why this check notifies elsewhere.
 - *Look at:* `make monitoring`, `journalctl -u vps-resources -e`.
 
-### Elsewhere in Discord
+### 💬 Elsewhere in Discord
 
 - **LalaBot's status light**: 🟢 online "All 4 bots up", 🟡 idle "… (re)starting", 🔴 Do Not Disturb "… down". Updated every minute.
 - **Backups forum post**: a `.sql` file every day at 18:05 UTC. On failure: "❌ Daily database backup failed, see `/journal lalabot`." with a ping.
@@ -262,11 +262,11 @@ The webhook in use was created **by LalaBot** with `/alertwebhook`. That matters
 - **Each bot's error webhook**: exceptions that *don't* kill the bot (a failed command, a broken task) go to that bot's error channel, through `shared`'s `ErrorNotificationManager`. That's separate from this setup but covers the "running, but something inside failed" case.
 - **Log mirrors**: AluBot and IreBot also copy their log lines into a logs channel through their `WEBHOOK_LOGGER`. Handy for reading along, but it's not an alert: it goes quiet when the bot dies.
 
-### In Twitch chat
+### 💜 In Twitch chat
 
 - **"I reloaded myself - commit: …"**: IreBot says this in my chat every time it gets ready. After a deploy it confirms the new commit is running; seeing it repeatedly *without* a deploy means IreBot keeps restarting.
 
-### Outside Discord
+### 📱 Outside Discord
 
 - **GitHub mobile notifications** when a deploy fails.
 
@@ -476,7 +476,7 @@ Each of AluBot, Dota2Bot and IreBot has the same three pieces:
 2. **`READY=1` + `watchdog_loop()`** from `shared/systemd.py` (see the table in the `Type=notify` section).
 3. **A healthcheck loop** pinging the bot's `HEALTHCHECK_URL` (from its `.env`) every 5 min, only on the VPS, and only when healthy.
 
-### What each bot's healthcheck checks
+### 🔍 What each bot's healthcheck checks
 
 | Bot | Pings only if… | Where |
 | --- | --- | --- |
