@@ -41,10 +41,6 @@ printf '\n\033[35mdatabase backups\033[0m (by LalaBot)\n'
 backup_url_pattern="^BACKUP_HEALTHCHECK_URL.*=.*[\"']"
 check 'grep -q "$backup_url_pattern" /home/ubuntu/LalaBot/config.py 2>/dev/null' \
     "BACKUP_HEALTHCHECK_URL is set in /home/ubuntu/LalaBot/config.py"
-backup_remote=$(sed -n "s/^BACKUP_REMOTE *= *[\"']\([^\"']*\)[\"'].*/\1/p" /home/ubuntu/LalaBot/config.py 2>/dev/null)
-check '[ -n "$backup_remote" ]' "BACKUP_REMOTE is set in /home/ubuntu/LalaBot/config.py"
-check 'command -v rclone >/dev/null' "rclone is installed"
-check 'rclone lsf --max-depth 1 "$backup_remote" >/dev/null 2>&1' "rclone can list the off-site backups ($backup_remote)"
 
 printf '\n\033[35mshared\033[0m\n'
 check '[ -s /home/ubuntu/.config/failure-webhook-url ]' "crash alert webhook URL file exists"

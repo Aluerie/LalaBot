@@ -47,3 +47,11 @@ Moving the database into the compose stack later is optional; decide once the bo
 * Against: it already works, and moving it is the riskiest step of the migration (the data has to move);
   the data lives in a Docker volume, so a wrong `docker compose down -v` or volume prune deletes it;
   LalaBot's `pg_dump`/`psql` would have to run through `docker exec`; one more thing that has to be up before the bots.
+
+## 💾 Find a second place for the database backups (someday)
+
+The daily backups only live in the Discord backups post, so losing that channel or Discord deleting attachments loses them all.
+A second copy somewhere else would close that gap. Backblaze B2 refused the signup (even through a VPN), so it should be a
+service I can actually register at, or one I already have: Oracle Object Storage in the VPS's account (20 GB free) is the
+easiest, though it doesn't survive losing the Oracle account. The upload could be a gzipped `rclone copyto` after each
+backup, keeping ~30 days.
