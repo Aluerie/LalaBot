@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+import discord
 from discord.ext import commands
 
 from .utils import const
@@ -23,8 +24,15 @@ class Cmd(commands.Cog):
     @commands.command()
     @commands.is_owner()
     async def sync(self, ctx: commands.Context[LalaBot]) -> None:
-        await ctx.bot.tree.sync()
-        await ctx.send(f"synced the tree {const.HU_EMOTE}")
+        synced = await ctx.bot.tree.sync()
+        log.info("Synced %d slash commands", len(synced))
+        text = f"synced {len(synced)} slash commands {const.HU_EMOTE}"
+        try:
+            await ctx.send(text)
+        except discord.Forbidden:
+            # The sync worked, but LalaBot can't post here: without any answer it'd look like it failed,
+            # and syncing again and again only runs into Discord's rate limit.
+            await ctx.author.send(f"{text} (I can't post in {ctx.channel.jump_url}, so here)")
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx: commands.Context[LalaBot], error: commands.CommandError) -> None:

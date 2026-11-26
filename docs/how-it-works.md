@@ -404,7 +404,7 @@ The `ubuntu` user can read the whole journal without `sudo` (it's in the `adm` g
 
 **[ext/report.py](../ext/report.py)**: the weekly report and `/report [days]`. It reads **systemd's own messages** about each bot from the journal (`journalctl _PID=1 UNIT=…`, so not the bots' logs): "Started" = up, "Stopping" / "Main process exited" / "Failed with result" = down, "Failed with result" = a crash, "Scheduled restart job" = an auto-restart. From the up/down times it computes downtime and uptime %. VPS reboots come from `journalctl --list-boots`.
 
-**[ext/cmd.py](../ext/cmd.py)**: the `@LalaBot sync` text command (registers slash commands with Discord) and text-command error replies.
+**[ext/cmd.py](../ext/cmd.py)**: the `@LalaBot sync` text command (registers slash commands with Discord; answers with how many it synced, in DMs if it can't post in the channel, since a silent success looks like a failure and repeated syncs hit Discord's rate limit) and text-command error replies.
 
 **[ext/utils/const.py](../ext/utils/const.py)**: the owner ID, forum post IDs (backups, weekly report), the database name, and `SERVICES`: each bot's unit name, emoji and repo folder. Adding a bot here adds it to every command, the status light and the report.
 
