@@ -362,7 +362,7 @@ The stop during a deploy is clean (`SERVICE_RESULT=success`), so it doesn't aler
 | `/etc/systemd/system/vps-resources.{service,timer}` | symlinks to the files in `~/LalaBot` |
 | `~/.config/failure-webhook-url` | the Discord webhook URL the scripts post to (secret); `.old` = the previous one |
 | `~/.config/monitoring-healthcheck-url` | the "VPS monitoring" healthchecks.io URL (secret) |
-| `~/LalaBot/config.py` | LalaBot's token and its two healthcheck URLs (secret, git-ignored) |
+| `~/LalaBot/.env` | LalaBot's token and its two healthcheck URLs (secret, git-ignored) |
 | `~/<Bot>/.env` | the other bots' secrets, including their `HEALTHCHECK_URL` |
 | `~/.cache/notify-failure/<unit>` | crash alert throttle: `LAST_SENT SUPPRESSED`. Its modification time = the last crash. |
 | `~/.cache/notify-recovery/<unit>` | the last crash already announced as recovered |
@@ -416,7 +416,7 @@ The `ubuntu` user can read the whole journal without `sudo` (it's in the `adm` g
 
 **[ext/utils/forum.py](../ext/utils/forum.py)**: `get_thread()`: fetch a forum post by ID (archived posts aren't cached, so it fetches).
 
-**[config.example.py](../config.example.py)**: what `config.py` needs: `TOKEN`, `HEALTHCHECK_URL`, `BACKUP_HEALTHCHECK_URL`.
+**[.env.example](../.env.example)**: what `.env` needs: `DISCORD_TOKEN`, `HEALTHCHECK_URL`, `BACKUP_HEALTHCHECK_URL` (read by [settings.py](../settings.py)).
 
 ### 🧾 The systemd units
 
@@ -462,7 +462,7 @@ All are plain POSIX `sh` (run with `/bin/sh`, which is `dash` on Ubuntu), run as
 
 ### 🛠️ Everything else
 
-**[Makefile](../Makefile)**: run at home. `make monitoring` (the checklist above, over SSH), `make scp` (upload `config.py` to the VPS).
+**[Makefile](../Makefile)**: run at home. `make monitoring` (the checklist above, over SSH), `make scp` (upload `.env` to the VPS).
 
 **[.github/workflows/deploy_service.yml](../.github/workflows/deploy_service.yml)**: the deploy (see the walkthrough).
 

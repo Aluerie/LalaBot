@@ -14,7 +14,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-import config
+from settings import env
 
 from .utils import const, shell
 from .utils.forum import get_thread
@@ -26,8 +26,6 @@ if TYPE_CHECKING:
 
 
 log = logging.getLogger(__name__)
-
-BACKUP_HEALTHCHECK_URL: str | None = getattr(config, "BACKUP_HEALTHCHECK_URL", None)
 
 # A full dump is ~1.2 MB (November 2026); far below that means something went wrong, not that the data shrank.
 MIN_DUMP_BYTES = 100_000
@@ -86,9 +84,9 @@ async def ping_backup_healthcheck(*, failed: bool = False) -> None:
     healthchecks.io then alerts when the daily backup fails or doesn't happen at all.
     Only pings when running as a systemd service, so a backup made at home doesn't count.
     """
-    if BACKUP_HEALTHCHECK_URL is None or not is_systemd_service():
+    if not env.BACKUP_HEALTHCHECK_URL or not is_systemd_service():
         return
-    url = f"{BACKUP_HEALTHCHECK_URL}/fail" if failed else BACKUP_HEALTHCHECK_URL
+    url = f"{env.BACKUP_HEALTHCHECK_URL}/fail" if failed else env.BACKUP_HEALTHCHECK_URL
     try:
         async with (
             aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session,
@@ -113,8 +111,8 @@ class Backup(commands.Cog):
         if not is_systemd_service():
             log.info("Not running as a systemd service, so not backing up the database daily.")
             return
-        if BACKUP_HEALTHCHECK_URL is None:
-            log.warning("BACKUP_HEALTHCHECK_URL is not set in config.py, so nothing notices missing backups.")
+        if not env.BACKUP_HEALTHCHECK_URL:
+            log.warning("BACKUP_HEALTHCHECK_URL is not set in .env, so nothing notices missing backups.")
         self.daily_backup.start()
 
     @override

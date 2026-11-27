@@ -13,7 +13,7 @@ set -f  # the patterns below contain `*` and `[...]`, which must not expand to f
 
 # unit, repo folder, file that holds HEALTHCHECK_URL, pattern of a non-empty value (no spaces: entries split on them)
 for entry in \
-    "lalabot LalaBot config.py ^HEALTHCHECK_URL.*=.*[\"']" \
+    "lalabot LalaBot .env ^HEALTHCHECK_URL=." \
     "irebot IrenesBot .env ^HEALTHCHECK_URL=." \
     "alubot AluBot .env ^HEALTHCHECK_URL=." \
     "dota2bot Dota2Bot .env ^HEALTHCHECK_URL=."; do
@@ -38,9 +38,8 @@ check '[ -s /home/ubuntu/.config/monitoring-healthcheck-url ]' \
     "its healthchecks.io URL is in /home/ubuntu/.config/monitoring-healthcheck-url"
 
 printf '\n\033[35mdatabase backups\033[0m (by LalaBot)\n'
-backup_url_pattern="^BACKUP_HEALTHCHECK_URL.*=.*[\"']"
-check 'grep -q "$backup_url_pattern" /home/ubuntu/LalaBot/config.py 2>/dev/null' \
-    "BACKUP_HEALTHCHECK_URL is set in /home/ubuntu/LalaBot/config.py"
+check 'grep -q "^BACKUP_HEALTHCHECK_URL=." /home/ubuntu/LalaBot/.env 2>/dev/null' \
+    "BACKUP_HEALTHCHECK_URL is set in /home/ubuntu/LalaBot/.env"
 
 printf '\n\033[35mshared\033[0m\n'
 check '[ -s /home/ubuntu/.config/failure-webhook-url ]' "crash alert webhook URL file exists"

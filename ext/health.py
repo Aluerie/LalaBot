@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, override
 import aiohttp
 from discord.ext import commands, tasks
 
-import config
+from settings import env
 
 from .utils.systemd import is_systemd_service
 
@@ -17,8 +17,6 @@ if TYPE_CHECKING:
 
 
 log = logging.getLogger(__name__)
-
-HEALTHCHECK_URL: str | None = getattr(config, "HEALTHCHECK_URL", None)
 
 
 class Health(commands.Cog):
@@ -37,8 +35,8 @@ class Health(commands.Cog):
         if not is_systemd_service():
             log.info("Not running as a systemd service, so not pinging healthchecks.io.")
             return
-        if HEALTHCHECK_URL is None:
-            log.warning("HEALTHCHECK_URL is not set in config.py, so nothing reports that LalaBot is alive.")
+        if not env.HEALTHCHECK_URL:
+            log.warning("HEALTHCHECK_URL is not set in .env, so nothing reports that LalaBot is alive.")
             return
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
         self.ping_loop.start()
@@ -51,13 +49,13 @@ class Health(commands.Cog):
 
     @tasks.loop(minutes=5)
     async def ping_loop(self) -> None:
-        if HEALTHCHECK_URL is None or self.session is None:
+        if not env.HEALTHCHECK_URL or self.session is None:
             return
         # `is_ready()` stays True while discord.py reconnects, so also require a live gateway connection.
         if not self.bot.is_ready() or self.bot.ws is None or not self.bot.ws.open:
             return
         try:
-            async with self.session.get(HEALTHCHECK_URL) as response:
+            async with self.session.get(env.HEALTHCHECK_URL) as response:
                 response.raise_for_status()
         except TimeoutError, aiohttp.ClientError:
             log.warning("Failed to ping healthchecks.io", exc_info=True)

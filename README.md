@@ -40,7 +40,7 @@ LalaBot needs these permissions in the forum: View Channel, Send Messages in Pos
 
 ## ⚙️ Config
 
-Copy [config.example.py](config.example.py) to `config.py` (git-ignored) and fill in the values.
+Copy [.env.example](.env.example) to `.env` (git-ignored) and fill in the values. `make scp` copies it to the VPS.
 
 ## 🩺 Monitoring
 
@@ -51,7 +51,7 @@ LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bo
 
 * **healthchecks.io** — every bot (AluBot, IreBot, Dota2Bot, LalaBot) pings its own check every few minutes while it's healthy.
   When pings stop (bot down, stuck, disconnected, or the whole VPS down), healthchecks.io notifies me.
-  LalaBot's check URL goes into `config.py` as `HEALTHCHECK_URL`.
+  LalaBot's check URL goes into `.env` as `HEALTHCHECK_URL`.
 * **systemd `ExecStopPost=`** — [scripts/notify_failure.sh](scripts/notify_failure.sh) posts to a Discord webhook
   right away whenever a service crashes, gets killed by the watchdog, or fails to start,
   with the service's last log lines (usually the traceback) in the message,
@@ -71,7 +71,7 @@ LalaBot doesn't watch the other bots anymore; monitoring lives outside of any bo
   A failed step skips it, and it pings `/fail` when the Discord webhook is gone, so a broken timer, check or webhook
   gets noticed. This check notifies by email or the healthchecks.io app, since the webhook may be what's broken.
 * **Database backups** — after every successful backup LalaBot pings a daily healthchecks.io check
-  (`BACKUP_HEALTHCHECK_URL` in `config.py`), and pings its `/fail` URL when the daily backup fails.
+  (`BACKUP_HEALTHCHECK_URL` in `.env`), and pings its `/fail` URL when the daily backup fails.
   So healthchecks.io alerts both on a failed backup and on a day without one.
 * **LalaBot's Discord status** — every minute LalaBot checks the bots' services (itself included) and shows the result
   in its status: 🟢 online "All 4 bots up", 🟡 idle while one is (re)starting, 🔴 Do Not Disturb when one is down.

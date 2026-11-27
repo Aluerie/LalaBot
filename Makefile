@@ -48,8 +48,8 @@ db-down:  # Stop the home PostgreSQL (the data stays)
 
 .PHONY: scp
 .SILENT: scp
-scp:  # Copy config.py to the VPS
-	scp config.py $(VPS):~/LalaBot/config.py
+scp:  # Copy .env to the VPS
+	scp .env $(VPS):~/LalaBot/.env
 
 
 .PHONY: monitoring
