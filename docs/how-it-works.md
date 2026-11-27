@@ -140,6 +140,14 @@ The watchdog fixes that. With `WatchdogSec=120`, systemd expects the message `WA
 
 Where each bot starts it: AluBot in `main.py` (a task, cancelled in `finally`), Dota2Bot in `main.py` (in its `TaskGroup`), IreBot in `main.py`, LalaBot in `setup_hook` in [main.py](../main.py).
 
+AluBot, Dota2Bot and IreBot have a second guard that doesn't need systemd: the same `watchdog_loop()` (from `shared.runtime`) also starts a thread that checks the loop ticked within the last 120 s. If it didn't, the thread dumps every thread's stack into the log, so the journal shows where it froze, and ends the process with exit code 70. Under systemd both guards fire at about the same time. In Docker, which only restarts containers that exit, the thread is the one that catches a freeze.
+
+### 🛑 Clean stops (SIGTERM)
+
+`systemctl stop` and `systemctl restart` (so every deploy and `/restart`) send the bot `SIGTERM`. AluBot, Dota2Bot and IreBot catch it with `shared.runtime.run_until_sigterm`: it cancels the bot's main task, so the `async with` blocks close the Discord/Twitch/Steam connection, the web server and the database pool, and then the process exits with code 0. The journal shows `Got SIGTERM, shutting down.` and `Shut down cleanly.`, and systemd records `result=success`, so no 💥 alert. LalaBot doesn't catch it: Python's default is to die on `SIGTERM`, which systemd also counts as a clean stop.
+
+This matters more in Docker: there the bot is the container's first process (PID 1), and PID 1 ignores `SIGTERM` unless it handles it, so `docker stop` would wait 10 s and then kill it.
+
 ### 🧹 `ExecStopPost` and `$SERVICE_RESULT`
 
 `ExecStopPost=` runs after **every** stop: crashes, but also normal stops, restarts and deploys. systemd passes the script environment variables describing why:
@@ -477,8 +485,8 @@ All are plain POSIX `sh` (run with `/bin/sh`, which is `dash` on Ubuntu), run as
 Each of AluBot, Dota2Bot and IreBot has the same three pieces:
 
 1. **A unit file in its repo** (`alubot.service`, `dota2bot.service`, `irebot.service`), linked into systemd: `Type=notify`, `WatchdogSec=120`, `TimeoutStartSec=300`, `Restart=always`, `ExecStopPost` → LalaBot's `notify_failure.sh`.
-2. **`READY=1` + `watchdog_loop()`** from `shared/systemd.py` (see the table in the `Type=notify` section).
-3. **A healthcheck loop** pinging the bot's `HEALTHCHECK_URL` (from its `.env`) every 5 min, only on the VPS, and only when healthy.
+2. **`notify_ready()` (`READY=1`) + `watchdog_loop()`** from `shared/runtime.py` (see the table in the `Type=notify` section).
+3. **A healthcheck loop** pinging the bot's `HEALTHCHECK_URL` (from its `.env`) every 5 min, only in prod (`BOT_ENV=prod`, set in the unit), and only when healthy.
 
 ### 🔍 What each bot's healthcheck checks
 
@@ -493,8 +501,8 @@ Each of AluBot, Dota2Bot and IreBot has the same three pieces:
 
 `src/shared` in each of the three bots is the [Shared-Bot-Utilities](https://github.com/Aluerie/Shared-Bot-Utilities) repo. The parts that matter here:
 
-- `systemd.py`: `sd_notify`, `watchdog_loop`, `is_systemd_service` (same as LalaBot's own copy).
-- `concepts/db.py`: `create_pool(…, application_name=…)`. Each bot names its database connections, so `/db` shows "alubot 20, dota2bot 20, irebot 20". Each pool keeps 20 connections open.
+- `runtime.py`: `is_prod` (`BOT_ENV=prod`), `notify_ready`, `watchdog_loop` (systemd's watchdog plus the freeze thread), `run_until_sigterm`, and the health file a Docker `HEALTHCHECK` will look at (`BOT_HEALTH_FILE`, unset under systemd).
+- `concepts/db.py`: `create_pool(…, application_name=…)`. Each bot names its database connections, so `/db` shows them per bot. Each pool keeps 2 connections open and opens up to 10.
 - `concepts/logs.py`: loguru setup. Logs go to the console only, which under systemd means the journal.
 - `concepts/error_notifications.py`: `ErrorNotificationManager`, which sends exceptions to the bot's error webhook.
 
@@ -566,7 +574,7 @@ Everything below follows from that.
 - **Pings only when healthy.** A process that's running but disconnected is the hardest failure to notice. Making the ping conditional turns it into a normal "pings stopped" alert.
 - **Throttling plus a recovery message.** A crash loop shouldn't flood the channel, but I still want to know how many crashes there were and when it's over.
 - **Monitoring the monitoring.** Alerts that fail silently are worse than none, so the alerting path itself pings healthchecks.io, which notifies me through a different channel.
-- **`is_systemd_service()`.** Running a bot at home must not ping prod's healthchecks (that would hide an outage) or post backups.
+- **An explicit prod switch.** Running a bot at home must not ping prod's healthchecks (that would hide an outage) or post backups. AluBot, Dota2Bot and IreBot check `BOT_ENV=prod`, which only their units set. LalaBot still uses `is_systemd_service()` (systemd sets `INVOCATION_ID` for every service).
 
 ## 🕳️ What's not covered
 
@@ -574,4 +582,4 @@ Everything below follows from that.
 - **Twitch problems behind connected sockets**: IreBot's healthcheck only sees that its conduit websockets are connected. An expired token or a broken EventSub subscription can leave them connected while no events arrive, and nothing notices until a command or alert doesn't work.
 - **healthchecks.io or Discord being down**: then I don't get the alerts that go through them.
 - **Backups only live in Discord.** There's no second copy elsewhere.
-- **Docker.** All of this is systemd-specific. When the bots move to Docker, the watchdog becomes a container `HEALTHCHECK` plus a restart policy, `ExecStopPost` becomes something watching Docker's events, and the journal stays if containers use the `journald` log driver.
+- **Docker.** All of this is systemd-specific. When the bots move to Docker, the watchdog becomes a container `HEALTHCHECK` plus a restart policy, `ExecStopPost` becomes something watching Docker's events, and the journal stays if containers use the `journald` log driver. AluBot, Dota2Bot and IreBot are prepared for it: `BOT_ENV`, the freeze thread, the health file and the clean `SIGTERM` stop all work in a container.
