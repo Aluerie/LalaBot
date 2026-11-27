@@ -71,6 +71,20 @@ ssh vps "journalctl -u irebot --since today --no-pager | grep Migrations"
 
 Try a new migration at home before pushing: start the bot locally (`make run` in its repo). It applies the file to the home database at startup, and stops with the error if the file fails.
 
+## ✅ Check every query against the migrations
+
+Each bot's `tests/test_sql.py` collects the SQL strings in its source and asks PostgreSQL to *prepare* each one (check it without running it) in a throwaway database built from the migrations. A wrong table or column name, or a migration that's missing, fails the test. CI runs it on every push, with its own PostgreSQL. To run it at home against the dev-db container (in a bot's folder, e.g. `D:\CODE\IreBot`), point it at the container's `postgres` database:
+
+```powershell
+$env:SQL_CHECK_POSTGRES = "postgresql://postgres:<password from LalaBot\dev-db\.env>@localhost:5433/postgres"
+```
+
+```powershell
+uv run pytest tests/test_sql.py
+```
+
+It creates and drops a `sqlcheck_…` database next to `alubot`, so the home data isn't touched. IreBot and Dota2Bot need each other's migrations, which they find in the sibling folders `D:\CODE\Dota2Bot` and `D:\CODE\IreBot`. Queries built with f-strings can't be checked; a failing test lists them.
+
 ## 🔌 Connections
 
 Each bot's pool keeps 2 connections open and opens up to 10. They show up under the bot's name:
