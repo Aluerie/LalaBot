@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import collections
 import datetime as dt
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -17,16 +18,20 @@ from typing import TYPE_CHECKING, Any, Literal, Self, override
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
+from .services import ALERTS_WEBHOOK_URL_FILE
 from .utils import const
 from .utils.postgres import psql
+from .utils.systemd import is_systemd_service
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
     from main import LalaBot
 
+
+log = logging.getLogger(__name__)
 
 SCHEMAS_QUERY = """
 select table_schema from information_schema.tables where table_name = 'scheduled_jobs' order by 1
@@ -48,6 +53,10 @@ HOURS_SHOWN_UP_TO = 48
 BLOCK_LIMIT = 1200
 """Characters per bot's block: a Components V2 message holds 4000 characters of text in all."""
 PROBLEM_LIMIT = 300
+ALERT_FROM_ATTEMPT = 2
+"""A retrying job gets an alert from this many failures of its occurrence on."""
+ALERT_CHECK_MINUTES = 5
+MAX_ALERT_BUTTONS = 20
 MAX_PROBLEM_ROWS = 8
 """Problems shown with a button; a message holds 40 components (a problem row takes 3)."""
 
@@ -75,6 +84,59 @@ def jobs_query(schemas: Iterable[str]) -> str:
         for schema in schemas
     ]
     return " union all ".join(parts) + " order by 6, 2"
+
+
+RUNS_SCHEMAS_QUERY = """
+select table_schema from information_schema.tables where table_name = 'scheduled_job_runs' order by 1
+"""
+OUTCOME_LABELS = {"done": "done", "rescheduled": "put off", "failed": "failed", "gave_up": "gave up", "skipped": "skipped"}
+"""How `/jobs` names the outcomes of `scheduled_job_runs` (``stopped`` counts as done)."""
+
+
+def checked_schemas(schemas: Iterable[str]) -> list[str]:
+    """Return the schemas, refusing any that isn't a plain identifier: they go into queries as they are."""
+    schemas = list(schemas)
+    if bad := [schema for schema in schemas if not SCHEMA_NAME.fullmatch(schema)]:
+        msg = f"Not plain schema names: {bad}"
+        raise ValueError(msg)
+    return schemas
+
+
+def runs_summary_query(schemas: Iterable[str]) -> str:
+    """Build the query for how the last 24 hours of runs went, per schema and outcome."""
+    parts = [
+        f"""
+        select '{schema}', outcome, count(*) from "{schema}".scheduled_job_runs
+        where finished_at > now() - interval '24 hours' group by outcome
+        """  # noqa: S608 - the schema names are checked, everything else is constant
+        for schema in checked_schemas(schemas)
+    ]
+    return " union all ".join(parts)
+
+
+def gave_up_query(schemas: Iterable[str], since: int) -> str:
+    """Build the query for the occurrences given up on since a unix time, with their error's last line.
+
+    One-off jobs are deleted when they're given up on, so the history is the only place that still knows about them.
+    """
+    parts = [
+        f"""
+        select '{schema}', job_id, kind, attempt,
+               regexp_replace(coalesce((regexp_match(btrim(error, E' \\n'), '[^\\n]*$'))[1], ''), '\\s+', ' ', 'g')
+        from "{schema}".scheduled_job_runs
+        where outcome = 'gave_up' and finished_at > to_timestamp({int(since)})
+        """  # noqa: S608 - the schema names are checked, `since` is an `int`, everything else is constant
+        for schema in checked_schemas(schemas)
+    ]
+    return " union all ".join(parts)
+
+
+def runs_line(outcomes: collections.Counter[str]) -> str:
+    """Describe a bot's last 24 hours of runs, e.g. "-# last 24 h: 12 done · 1 failed"; empty if there were none."""
+    counts = collections.Counter({"done": outcomes["done"] + outcomes["stopped"]})
+    counts.update({outcome: count for outcome, count in outcomes.items() if outcome not in {"done", "stopped"}})
+    parts = [f"{count} {OUTCOME_LABELS.get(outcome, outcome)}" for outcome, count in counts.items() if count]
+    return f"-# last 24 h: {' · '.join(parts)}" if parts else ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,11 +236,24 @@ class Problem:
     action
         The button next to it: "retry" (run the failing occurrence again now), "clear" (forget the error of an
         occurrence that was given up on), "delete" (a job nobody runs), or `None` (a bot is holding it right now).
+    category
+        What's wrong: "stuck", "overdue", "retrying" or "given_up".
     """
 
     job: JobRow
     text: str
     action: Literal["retry", "clear", "delete"] | None
+    category: Literal["stuck", "overdue", "retrying", "given_up"]
+
+    @property
+    def key(self) -> tuple[str, int, str]:
+        """Identify the problem, so the alerts report it once."""
+        return (self.job.schema, self.job.id, self.category)
+
+    @property
+    def is_alert_worthy(self) -> bool:
+        """Whether it's worth an alert: one failed try is often a blip that the retry fixes, so only from the second."""
+        return self.category != "retrying" or self.job.attempts >= ALERT_FROM_ATTEMPT
 
 
 def problems(jobs: Iterable[JobRow], now: int) -> list[Problem]:
@@ -196,16 +271,16 @@ def problems(jobs: Iterable[JobRow], now: int) -> list[Problem]:
         where = f"**{job.schema}** `#{job.id}` {job.kind}"
         if job.claimed_at is not None and now - job.claimed_at > STUCK_AFTER.total_seconds():
             text = f"🧊 {where}: claimed {ago(now - job.claimed_at)} ago and still not done (a hanging handler?)"
-            found.append(Problem(job, text, None))
+            found.append(Problem(job, text, None, "stuck"))
         elif job.claimed_at is None and now - job.fires_at > OVERDUE_AFTER.total_seconds():
             text = f"⏳ {where}: {ago(now - job.fires_at)} overdue (the bot is down, or the handler isn't loaded?)"
-            found.append(Problem(job, text, "delete"))
+            found.append(Problem(job, text, "delete", "overdue"))
         if job.attempts:
             text = f"🔁 {where}: failed {job.attempts}×, retrying <t:{job.fires_at}:R>: `{job.error}`"
-            found.append(Problem(job, text, "retry" if job.claimed_at is None else None))
+            found.append(Problem(job, text, "retry" if job.claimed_at is None else None, "retrying"))
         elif job.error:
             text = f"❌ {where}: the last occurrence was given up on: `{job.error}`"
-            found.append(Problem(job, text, "clear" if job.claimed_at is None else None))
+            found.append(Problem(job, text, "clear" if job.claimed_at is None else None, "given_up"))
     return found
 
 
@@ -217,15 +292,18 @@ def fit(text: str, limit: int) -> str:
     return cut[: cut.rfind("\n")] + "\n…" if "\n" in cut else cut + "…"
 
 
-def schema_block(schema: str, jobs: Sequence[JobRow], *, upcoming: int) -> str:
-    """Describe one bot's jobs: how many of each kind, then the next ones."""
+def schema_block(schema: str, jobs: Sequence[JobRow], *, upcoming: int, runs: collections.Counter[str] | None = None) -> str:
+    """Describe one bot's jobs: how many of each kind, the next ones, and how the last 24 hours of runs went."""
     service = SCHEMA_SERVICES.get(schema, schema)
     emoji = const.SERVICES[service].emoji if service in const.SERVICES else "🤖"
+    history = runs_line(runs) if runs else ""
     if not jobs:
-        return f"{emoji} **{schema}**: no jobs"
+        return "\n".join(filter(None, [f"{emoji} **{schema}**: no jobs", history]))
     kinds = collections.Counter(job.kind for job in jobs)
     summary = ", ".join(f"{kind} {count}" for kind, count in kinds.most_common())
     lines = [f"{emoji} **{schema}**: {len(jobs)} jobs ({summary})"]
+    if history:
+        lines.append(history)
     for job in jobs[:upcoming]:
         repeats = " 🔁" if job.rule else ""
         lines.append(f"- `#{job.id}` {job.kind}{repeats} <t:{job.fires_at}:R> {job.label}".rstrip())
@@ -243,7 +321,14 @@ BUTTONS: dict[str, tuple[str, str, discord.ButtonStyle]] = {
 """Label, emoji and style of each `JobButton` action."""
 
 
-def render(schemas: Sequence[str], jobs: Sequence[JobRow], now: int, *, upcoming: int) -> discord.ui.LayoutView:
+def render(
+    schemas: Sequence[str],
+    jobs: Sequence[JobRow],
+    now: int,
+    *,
+    upcoming: int,
+    runs: dict[str, collections.Counter[str]] | None = None,
+) -> discord.ui.LayoutView:
     """Build `/jobs`: per bot, how many jobs of each kind and the next ones; then the problems, each with its button.
 
     Parameters
@@ -256,7 +341,10 @@ def render(schemas: Sequence[str], jobs: Sequence[JobRow], now: int, *, upcoming
         The current unix time.
     upcoming
         How many of the next jobs to list per bot.
+    runs
+        Per schema, how many runs of the last 24 hours had each outcome.
     """
+    runs = runs or {}
     by_schema: dict[str, list[JobRow]] = collections.defaultdict(list)
     for job in jobs:
         by_schema[job.schema].append(job)
@@ -267,7 +355,8 @@ def render(schemas: Sequence[str], jobs: Sequence[JobRow], now: int, *, upcoming
     )
     container.add_item(discord.ui.TextDisplay("## 🗓️ Scheduled jobs"))
     for schema in schemas:
-        container.add_item(discord.ui.TextDisplay(schema_block(schema, by_schema[schema], upcoming=upcoming)))
+        block = schema_block(schema, by_schema[schema], upcoming=upcoming, runs=runs.get(schema))
+        container.add_item(discord.ui.TextDisplay(block))
     container.add_item(discord.ui.Separator())
     if not trouble:
         container.add_item(discord.ui.TextDisplay("✅ No problems: nothing stuck, overdue, retrying or given up on."))
@@ -318,10 +407,10 @@ class JobButton(
     The job is in the custom ID, so the buttons keep working after LalaBot restarts.
     """
 
-    def __init__(self, action: str, schema: str, job_id: int) -> None:
-        label, emoji, style = BUTTONS[action]
+    def __init__(self, action: str, schema: str, job_id: int, *, label: str | None = None) -> None:
+        default_label, emoji, style = BUTTONS[action]
         button = discord.ui.Button[discord.ui.View](
-            label=label, emoji=emoji, style=style, custom_id=f"jobs:{action}:{schema}:{job_id}"
+            label=label or default_label, emoji=emoji, style=style, custom_id=f"jobs:{action}:{schema}:{job_id}"
         )
         super().__init__(button)
         self.action: str = action
@@ -373,19 +462,99 @@ class JobButton(
         await interaction.response.send_message(content, ephemeral=True)
 
 
+async def fetch_jobs() -> tuple[list[str], list[JobRow], dict[str, collections.Counter[str]]]:
+    """Query every bot's jobs and how the last 24 hours of their runs went.
+
+    Returns
+    -------
+    tuple[list[str], list[JobRow], dict[str, collections.Counter[str]]]
+        The schemas with a `scheduled_jobs` table, their jobs, and per schema the count of each run outcome.
+    """
+    schemas = [row[0] for row in await psql(SCHEMAS_QUERY) if SCHEMA_NAME.fullmatch(row[0])]
+    if not schemas:
+        return [], [], {}
+    jobs = [JobRow.from_fields(row) for row in await psql(jobs_query(schemas))]
+    runs: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    if run_schemas := [row[0] for row in await psql(RUNS_SCHEMAS_QUERY) if SCHEMA_NAME.fullmatch(row[0])]:
+        for schema, outcome, count in await psql(runs_summary_query(run_schemas)):
+            runs[schema][outcome] += int(count)
+    return schemas, jobs, runs
+
+
 class Jobs(commands.Cog):
-    """`/jobs`: the bots' scheduled jobs."""
+    """`/jobs`: the bots' scheduled jobs; and alerts about new problems with them, in prod."""
 
     def __init__(self, bot: LalaBot) -> None:
         self.bot: LalaBot = bot
+        self.alerted: set[tuple[str, int, str]] = set()
+        """Problems already reported, so each is reported once (while it lasts; again if it comes back)."""
+        self.checked_at: int = int(time.time())
+        """Up to when the history was checked for given-up occurrences."""
 
     @override
     async def cog_load(self) -> None:
         self.bot.add_dynamic_items(JobButton)
+        if is_systemd_service():
+            self.alert_about_problems.start()
+        else:
+            log.info("Not running as a systemd service, so not alerting about job problems.")
 
     @override
     async def cog_unload(self) -> None:
         self.bot.remove_dynamic_items(JobButton)
+        self.alert_about_problems.cancel()
+
+    # --- ALERTS -------------------------------------------------------------------------------------------------------
+
+    @tasks.loop(minutes=ALERT_CHECK_MINUTES)
+    async def alert_about_problems(self) -> None:
+        # An exception would stop the loop for good, so log it and try again next time instead.
+        try:
+            await self.check_for_problems()
+        except Exception:
+            log.exception("Checking the scheduled jobs for problems failed")
+
+    @alert_about_problems.before_loop
+    async def before_alert_about_problems(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def check_for_problems(self) -> None:
+        """Post the new problems of the bots' jobs to the alerts channel, with the buttons to deal with them."""
+        now = int(time.time())
+        schemas, jobs, _ = await fetch_jobs()
+        current = [problem for problem in problems(jobs, now) if problem.is_alert_worthy]
+        new = [problem for problem in current if problem.key not in self.alerted]
+        # forget the solved ones, so a problem that comes back is reported again
+        self.alerted = {problem.key for problem in current}
+
+        lines = [f"- {problem.text}" for problem in new]
+        existing = {(job.schema, job.id) for job in jobs}
+        if run_schemas := [row[0] for row in await psql(RUNS_SCHEMAS_QUERY) if SCHEMA_NAME.fullmatch(row[0])]:
+            for schema, job_id, kind, attempt, error in await psql(gave_up_query(run_schemas, self.checked_at)):
+                if (schema, int(job_id)) not in existing:  # repeating ones are among the problems above already
+                    lines.append(f"- ❌ **{schema}** `#{job_id}` {kind}: given up on after {attempt} tries: `{error}`")
+        self.checked_at = now
+        if not lines or not schemas:
+            return
+
+        view = discord.ui.View(timeout=None)
+        actionable = [(problem, problem.action) for problem in new if problem.action is not None]
+        for problem, action in actionable[:MAX_ALERT_BUTTONS]:
+            view.add_item(JobButton(action, problem.job.schema, problem.job.id, label=f"#{problem.job.id}"))
+        content = fit("🗓️ **Scheduled job problems** (more in /jobs)\n" + "\n".join(lines), 2000)
+        await self.send_alert(content, view)
+
+    async def send_alert(self, content: str, view: discord.ui.View) -> None:
+        """Post to the alerts channel through the alerts' webhook (LalaBot's own, so the buttons work)."""
+        url = ALERTS_WEBHOOK_URL_FILE.read_text(encoding="utf-8").strip()
+        webhook = discord.Webhook.from_url(url, client=self.bot)
+        mentions = discord.AllowedMentions.none()
+        try:
+            await webhook.send(content, view=view, allowed_mentions=mentions, wait=True)
+        except ValueError, discord.HTTPException:
+            # e.g. a webhook of no application (made by hand) can't have buttons: the text is what matters
+            log.warning("Could not send the job alert with buttons, sending it without", exc_info=True)
+            await webhook.send(content, allowed_mentions=mentions, wait=True)
 
     @app_commands.command()
     @app_commands.default_permissions(manage_guild=True)
@@ -397,8 +566,7 @@ class Jobs(commands.Cog):
             return
         await interaction.response.defer()
         try:
-            schemas = [row[0] for row in await psql(SCHEMAS_QUERY) if SCHEMA_NAME.fullmatch(row[0])]
-            rows = await psql(jobs_query(schemas)) if schemas else []
+            schemas, jobs, runs = await fetch_jobs()
         except (OSError, TimeoutError, RuntimeError) as error:
             await interaction.followup.send(f"❌ Couldn't query the database: {error}"[:2000])
             return
@@ -406,8 +574,7 @@ class Jobs(commands.Cog):
         if not schemas:
             await interaction.followup.send("🗓️ No bot has a `scheduled_jobs` table yet.")
             return
-        jobs = [JobRow.from_fields(row) for row in rows]
-        view = render(schemas, jobs, int(time.time()), upcoming=upcoming)
+        view = render(schemas, jobs, int(time.time()), upcoming=upcoming, runs=runs)
         # the mentions only name the jobs' users, nobody should be pinged
         await interaction.followup.send(view=view, allowed_mentions=discord.AllowedMentions.none())
 

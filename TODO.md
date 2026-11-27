@@ -56,3 +56,9 @@ A second copy somewhere else would close that gap. Backblaze B2 refused the sign
 service I can actually register at, or one I already have: Oracle Object Storage in the VPS's account (20 GB free) is the
 easiest, though it doesn't survive losing the Oracle account. The upload could be a gzipped `rclone copyto` after each
 backup, keeping ~30 days.
+
+## 📊 Scheduled jobs in the weekly report (maybe)
+
+The bots now keep a history of their scheduled jobs' runs (`<schema>.scheduled_job_runs`, 90 days), and `/jobs` already
+shows the last 24 hours. The weekly `/report` could add a line per bot: reminders sent, birthdays congratulated,
+failures and given-up ones over the week, from `outcome` counts grouped by `kind`. Same `psql` approach as `/jobs`.

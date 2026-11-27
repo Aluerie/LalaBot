@@ -1,11 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 
 import pytest
 
-from ext.jobs import JobRow, action_query, ago, fit, jobs_query, problems, render
+from ext.jobs import (
+    JobRow,
+    action_query,
+    ago,
+    fit,
+    gave_up_query,
+    jobs_query,
+    problems,
+    render,
+    runs_line,
+    runs_summary_query,
+)
 
 NOW = 1_800_000_000
 
@@ -129,3 +141,27 @@ def test_fit() -> None:
     assert fit("short", 100) == "short"
     assert fit("line one\nline two\nline three", 20) == "line one\nline two\n…"
     assert fit("x" * 50, 10) == "x" * 8 + "…"
+
+
+def test_alerts_skip_a_first_failure() -> None:
+    once, twice = problems([job(id=1, attempts=1, error="E"), job(id=2, attempts=2, error="E")], NOW)
+    assert not once.is_alert_worthy
+    assert twice.is_alert_worthy
+    assert twice.key == ("alubot", 2, "retrying")
+
+
+def test_runs_line() -> None:
+    assert runs_line(collections.Counter({"done": 10, "stopped": 2, "failed": 1})) == "-# last 24 h: 12 done · 1 failed"
+    assert runs_line(collections.Counter()) == ""
+
+
+def test_history_queries_check_schemas() -> None:
+    assert '"alubot".scheduled_job_runs' in runs_summary_query(["alubot"])
+    assert "to_timestamp(1800000000)" in gave_up_query(["alubot"], NOW)
+    with pytest.raises(ValueError, match="plain schema names"):
+        gave_up_query(['x"; drop table y; --'], NOW)
+
+
+def test_render_shows_the_last_day_of_runs() -> None:
+    text = render_json(["alubot"], [job()], NOW, upcoming=5, runs={"alubot": collections.Counter({"done": 3})})
+    assert "last 24 h: 3 done" in text

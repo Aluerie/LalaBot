@@ -25,7 +25,9 @@ All of them are owner-only.
   It's also posted to its forum post every Monday at 09:00 UTC, once `WEEKLY_REPORT_THREAD_ID` is set.
 * `/db` — the database's size, connections, biggest tables and its last backup.
 * `/jobs [upcoming]` — every bot's scheduled jobs (reminders, birthdays...): how many of each kind, the next ones,
-  and the ones with problems (stuck, overdue, retrying or given up on), with ▶️ Retry now, 🧹 Clear or 🗑️ Delete buttons.
+  how the last 24 hours of runs went, and the ones with problems (stuck, overdue, retrying or given up on),
+  with ▶️ Retry now, 🧹 Clear or 🗑️ Delete buttons.
+  In prod, LalaBot also checks every 5 minutes and posts new problems to the VPS alerts channel, with the same buttons.
 * `/alertwebhook` — create LalaBot's own webhook in the current channel and make the VPS alerts post through it.
   Only alerts through LalaBot's webhook can have working buttons (see below).
 * `/backup` — back up the VPS PostgreSQL database right now.
